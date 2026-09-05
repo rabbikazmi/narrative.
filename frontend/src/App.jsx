@@ -1,0 +1,247 @@
+import { useEffect, useMemo, useRef, useState } from "react";
+
+const API = "/api";
+
+const Icon = ({ name, size = 20 }) => {
+  const paths = {
+    upload: <><path d="M12 16V4"/><path d="m7 9 5-5 5 5"/><path d="M5 20h14"/></>,
+    play: <path d="m8 5 11 7-11 7Z" fill="currentColor" stroke="none" />,
+    pause: <><path d="M9 5v14"/><path d="M15 5v14"/></>,
+    stop: <rect x="6" y="6" width="12" height="12" rx="1" fill="currentColor" stroke="none" />,
+    next: <><path d="m7 5 9 7-9 7Z" fill="currentColor" stroke="none"/><path d="M18 5v14"/></>,
+    minus: <path d="M5 12h14"/>,
+    plus: <><path d="M5 12h14"/><path d="M12 5v14"/></>,
+    file: <><path d="M7 3h7l4 4v14H7Z"/><path d="M14 3v5h5"/></>,
+    close: <><path d="m6 6 12 12"/><path d="m18 6-12 12"/></>,
+  };
+  return <svg aria-hidden="true" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">{paths[name]}</svg>;
+};
+
+async function api(path, options) {
+  const response = await fetch(`${API}${path}`, options);
+  if (!response.ok) {
+    let message = "Something went wrong.";
+    try {
+      const payload = await response.json();
+      message = payload.detail || message;
+    } catch { /* Use the readable fallback. */ }
+    throw new Error(message);
+  }
+  return response;
+}
+
+export default function App() {
+  const [document, setDocument] = useState(null);
+  const [navigation, setNavigation] = useState(null);
+  const [activeSentenceId, setActiveSentenceId] = useState(null);
+  const [source, setSource] = useState(null);
+  const [phase, setPhase] = useState("empty");
+  const [error, setError] = useState("");
+  const [dragging, setDragging] = useState(false);
+  const fileInput = useRef(null);
+  const audio = useRef(new Audio());
+  const audioUrl = useRef(null);
+  const sourceUrl = useRef(null);
+
+  const sentences = useMemo(() => document?.sections.flatMap((section) => section.sentences) ?? [], [document]);
+  const foundIndex = sentences.findIndex((sentence) => sentence.id === activeSentenceId);
+  const progress = sentences.length && foundIndex >= 0 ? Math.round(((foundIndex + 1) / sentences.length) * 100) : 0;
+
+  useEffect(() => {
+    const player = audio.current;
+    const finish = () => setPhase("ready");
+    const fail = () => { setPhase("ready"); setError("The generated audio could not be played."); };
+    player.addEventListener("ended", finish);
+    player.addEventListener("error", fail);
+    return () => {
+      player.removeEventListener("ended", finish);
+      player.removeEventListener("error", fail);
+      player.pause();
+      if (audioUrl.current) URL.revokeObjectURL(audioUrl.current);
+      if (sourceUrl.current) URL.revokeObjectURL(sourceUrl.current);
+    };
+  }, []);
+
+  function stopLocalAudio() {
+    const player = audio.current;
+    player.pause();
+    player.currentTime = 0;
+    player.removeAttribute("src");
+    if (audioUrl.current) {
+      URL.revokeObjectURL(audioUrl.current);
+      audioUrl.current = null;
+    }
+  }
+
+  async function uploadFile(file) {
+    if (!file) return;
+    const extension = file.name.split(".").pop()?.toLowerCase();
+    if (!extension || !["pdf", "txt", "md"].includes(extension)) {
+      setError("Choose a PDF, TXT, or Markdown file.");
+      return;
+    }
+    setError("");
+    setPhase("uploading");
+    stopLocalAudio();
+    const form = new FormData();
+    form.append("file", file);
+    try {
+      const response = await api("/documents/upload", { method: "POST", body: form });
+      const nextDocument = await response.json();
+      if (sourceUrl.current) {
+        URL.revokeObjectURL(sourceUrl.current);
+        sourceUrl.current = null;
+      }
+      if (extension === "pdf") {
+        sourceUrl.current = URL.createObjectURL(file);
+        setSource({ type: "pdf", url: sourceUrl.current });
+      } else {
+        setSource({ type: "text", text: await file.text() });
+      }
+      setDocument(nextDocument);
+      const firstSentence = nextDocument.sections.flatMap((section) => section.sentences)[0];
+      setActiveSentenceId(firstSentence?.id ?? null);
+      const stateResponse = await api("/playback/state");
+      setNavigation(await stateResponse.json());
+      setPhase("ready");
+    } catch (uploadError) {
+      setPhase("empty");
+      setError(uploadError.message);
+    }
+  }
+
+  async function fetchAndPlayAudio() {
+    const response = await api(`/playback/audio?t=${Date.now()}`);
+    const blob = await response.blob();
+    if (!blob.size) throw new Error("Rime returned an empty audio file.");
+    stopLocalAudio();
+    audioUrl.current = URL.createObjectURL(blob);
+    audio.current.src = audioUrl.current;
+    await audio.current.play();
+    setPhase("playing");
+  }
+
+  async function startPlayback() {
+    if (!document || phase === "loading-audio") return;
+    setError("");
+    if (phase === "paused" && audio.current.src) {
+      await audio.current.play();
+      await api("/playback/resume", { method: "POST" });
+      setPhase("playing");
+      return;
+    }
+    setPhase("loading-audio");
+    try {
+      await api("/playback/start", { method: "POST" });
+      await fetchAndPlayAudio();
+    } catch (playError) {
+      setPhase("ready");
+      setError(playError.message);
+    }
+  }
+
+  async function pausePlayback() {
+    audio.current.pause();
+    setPhase("paused");
+    try {
+      const response = await api("/playback/pause", { method: "POST" });
+      setNavigation(await response.json());
+    } catch (pauseError) { setError(pauseError.message); }
+  }
+
+  async function stopPlayback() {
+    stopLocalAudio();
+    setPhase(document ? "ready" : "empty");
+    try {
+      const response = await api("/playback/stop", { method: "POST" });
+      setNavigation(await response.json());
+    } catch (stopError) { setError(stopError.message); }
+  }
+
+  async function command(text) {
+    if (!document) return;
+    setError("");
+    stopLocalAudio();
+    setPhase("loading-audio");
+    try {
+      const response = await api("/command", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text }),
+      });
+      const payload = await response.json();
+      setNavigation(payload.state);
+      setActiveSentenceId(payload.state.current_sentence_id);
+      await fetchAndPlayAudio();
+    } catch (commandError) {
+      setPhase("ready");
+      setError(commandError.message);
+    }
+  }
+
+  const statusLabel = phase === "loading-audio" ? "Preparing voice" : phase === "playing" ? "Reading aloud" : phase === "paused" ? "Paused" : phase === "uploading" ? "Reading document" : document ? "Ready" : "No document";
+
+  return (
+    <main className="app-shell">
+      <header className="topbar">
+        <div className="brand-mark" aria-hidden="true"><span /><span /><span /></div>
+        <div><p className="eyebrow">Can put a tagline here</p><h1>decide a fun name</h1></div>
+        <div className={`connection ${document ? "active" : ""}`}><span />{document ? "Document loaded" : "Waiting for a file"}</div>
+      </header>
+
+      <div className="reader-unit">
+      <section className="workspace">
+        <article className={`reader ${document ? "has-document" : ""}`}>
+          {!document ? (
+            <div className={`drop-zone ${dragging ? "dragging" : ""}`}
+              onDragEnter={(event) => { event.preventDefault(); setDragging(true); }}
+              onDragOver={(event) => event.preventDefault()}
+              onDragLeave={() => setDragging(false)}
+              onDrop={(event) => { event.preventDefault(); setDragging(false); uploadFile(event.dataTransfer.files[0]); }}>
+              <div className="file-illustration"><Icon name="file" size={34} /></div>
+              <p className="eyebrow">Hello there!</p>
+              <h2>What can I read for you? :))</h2>
+              <p>Drop a PDF, .txt, or Markdown file here, or select one from your computer.</p>
+              <button className="primary-button" type="button" onClick={() => fileInput.current?.click()} disabled={phase === "uploading"}>
+                <Icon name="upload" />{phase === "uploading" ? "Opening document…" : "Choose a document"}
+              </button>
+            </div>
+          ) : (
+            <div className="source-shell">
+              <div className="source-bar">
+                <div><Icon name="file" size={18}/><span>{document.name}</span></div>
+                <button className="text-button" onClick={() => fileInput.current?.click()} type="button">Replace file</button>
+              </div>
+              {source?.type === "pdf" ? (
+                <iframe className="pdf-viewer" src={source.url} title={`${document.name} document preview`} />
+              ) : (
+                <pre className="text-viewer">{source?.text}</pre>
+              )}
+            </div>
+          )}
+        </article>
+      </section>
+
+      {error && <div className="error-toast" role="alert"><span>{error}</span><button onClick={() => setError("")} aria-label="Dismiss error"><Icon name="close" size={17}/></button></div>}
+
+      <footer className="control-dock" aria-label="Reader controls">
+        <button className="upload-control" type="button" onClick={() => fileInput.current?.click()}><Icon name="upload" /><span><small>Document</small>{document ? "Replace file" : "Upload file"}</span></button>
+        <div className="transport">
+          <button className="icon-button" onClick={stopPlayback} disabled={!document || phase === "ready"} aria-label="Stop"><Icon name="stop" size={17}/></button>
+          <button className="play-button" onClick={phase === "playing" ? pausePlayback : startPlayback} disabled={!document || phase === "loading-audio"} aria-label={phase === "playing" ? "Pause" : "Play"}><Icon name={phase === "playing" ? "pause" : "play"} size={24}/></button>
+          <button className="icon-button" onClick={() => command("next section")} disabled={!document} aria-label="Next section"><Icon name="next" size={19}/></button>
+        </div>
+        <div className="speed-control" aria-label="Reading speed">
+          <button onClick={() => command("slow down")} disabled={!document || (navigation?.playback_speed ?? 1) <= 0.5} aria-label="Slow down"><Icon name="minus" size={16}/></button>
+          <span><small>Speed</small>{(navigation?.playback_speed ?? 1).toFixed(1)}×</span>
+          <button onClick={() => command("speed up")} disabled={!document || (navigation?.playback_speed ?? 1) >= 2} aria-label="Speed up"><Icon name="plus" size={16}/></button>
+        </div>
+        <div className="status-control"><span className={`status-dot ${phase}`} /><span><small>Status</small>{statusLabel}</span></div>
+        <div className="progress-control"><div><small>Document completed</small><strong>{progress}%</strong></div><div className="progress-track" aria-label={`${progress}% complete`}><span style={{ width: `${progress}%` }} /></div></div>
+      </footer>
+      </div>
+
+      <input ref={fileInput} className="visually-hidden" type="file" accept=".pdf,.txt,.md,application/pdf,text/plain,text/markdown" onChange={(event) => uploadFile(event.target.files?.[0])} />
+    </main>
+  );
+}
