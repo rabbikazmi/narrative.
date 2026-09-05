@@ -1,0 +1,45 @@
+# python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# packaging and build output
+build/
+dist/
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+
+# test and coverage output
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
+# type checking and tooling
+.mypy_cache/
+.pyright/
+.ruff_cache/
+
+# environment and secrets
+.env
+.env.*
+!.env.example
+
+# os files
+.DS_Store
+Thumbs.db
+
+# ocal logs and generated data
+*.log
+*.tmp
+uploads/
