@@ -17,3 +17,8 @@ class CurrentSentence(BaseModel):
     raw_text: str
     normalized_text: str
     navigation: NavigationState
+
+
+class PlaybackCompletionRequest(BaseModel):
+    sentence_id: str
+    request_id: int

@@ -11,7 +11,12 @@ async def command(request: Request, payload: CommandRequest):
     try:
         intent = classify_intent(payload.text)
         await request.app.state.reader.command(intent)
-        return {"intent": intent, "state": (await request.app.state.reader.store.read()).model_dump()}
+        reader = request.app.state.reader
+        return {
+            "intent": intent,
+            "state": (await reader.store.read()).model_dump(),
+            "request_id": reader.playback.request_id(),
+        }
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
 
