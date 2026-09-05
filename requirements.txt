@@ -1,0 +1,9 @@
+fastapi>=0.115
+httpx>=0.27
+num2words>=0.5.14
+PyMuPDF>=1.24
+python-multipart>=0.0.9
+uvicorn[standard]>=0.30
+pytest>=8.3
+pytest-asyncio>=0.24
+faster-whisper>=1.1

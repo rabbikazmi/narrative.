@@ -1,0 +1,60 @@
+import asyncio
+from collections.abc import Callable
+
+from backend.models.document import Document, Sentence
+from backend.models.navigation import NavigationState
+from backend.utils.logger import log_event
+
+
+class NavigationStateStore:
+    """Owns the only mutable navigation state in the application."""
+
+    def __init__(self) -> None:
+        self._state = NavigationState()
+        self._document: Document | None = None
+        self._lock = asyncio.Lock()
+
+    async def load_document(self, document: Document) -> NavigationState:
+        async with self._lock:
+            self._document = document
+            first = self._first_sentence(document)
+            self._state = NavigationState(
+                document_id=document.id,
+                current_section_id=document.sections[0].id if document.sections else None,
+                current_sentence_id=first.id if first else None,
+            )
+            log_event("state_changed", state=self._state.model_dump())
+            return self._state.model_copy(deep=True)
+
+    async def read(self) -> NavigationState:
+        async with self._lock:
+            return self._state.model_copy(deep=True)
+
+    async def mutate(self, mutation: Callable[[NavigationState, Document | None], None]) -> NavigationState:
+        async with self._lock:
+            mutation(self._state, self._document)
+            log_event("state_changed", state=self._state.model_dump())
+            return self._state.model_copy(deep=True)
+
+    async def current_sentence(self) -> Sentence | None:
+        async with self._lock:
+            return self._find_sentence(self._state.current_sentence_id)
+
+    async def sentence_by_id(self, sentence_id: str | None) -> Sentence | None:
+        async with self._lock:
+            return self._find_sentence(sentence_id)
+
+    async def _current_sections(self) -> list:
+        return self._document.sections if self._document else []
+
+    def _find_sentence(self, sentence_id: str | None) -> Sentence | None:
+        if not self._document or not sentence_id:
+            return None
+        return next((
+            sentence for section in self._document.sections for sentence in section.sentences
+            if sentence.id == sentence_id
+        ), None)
+
+    @staticmethod
+    def _first_sentence(document: Document) -> Sentence | None:
+        return next((sentence for section in document.sections for sentence in section.sentences), None)
