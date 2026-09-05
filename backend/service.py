@@ -19,7 +19,6 @@ class ReaderService:
         self.client = client or RimeClient()
         self.requests = RequestManager(
             self.store, self.controller, self.client, self.playback,
-            on_natural_completion=self._render_after_completion,
         )
 
     async def add_document(self, document: Document) -> Document:
@@ -63,7 +62,16 @@ class ReaderService:
         await self.requests.interrupt()
         return await self.controller.apply(CommandIntent.PAUSE)
 
-    async def _render_after_completion(self, sentence_id: str, state: NavigationState) -> None:
-        if state.current_sentence_id and state.current_sentence_id != sentence_id:
-            log_event("navigation_advanced", sentence_id=state.current_sentence_id)
+    async def complete_playback(self, sentence_id: str, request_id: int) -> NavigationState:
+        state = await self.store.read()
+        if state.current_sentence_id != sentence_id:
+            raise ValueError("The completed sentence is no longer current")
+        if not await self.playback.complete(request_id):
+            raise ValueError("The completed audio request is no longer current")
+
+        await self.controller.set_playing(False)
+        updated = await self.controller.advance_after_completion(sentence_id)
+        if updated.current_sentence_id and updated.current_sentence_id != sentence_id:
+            log_event("navigation_advanced", sentence_id=updated.current_sentence_id)
             await self.requests.render_current()
+        return await self.store.read()

@@ -15,8 +15,9 @@ class MockRimeClient(RimeClient):
 
 
 class NoCompletionPlayback(PlaybackManager):
-    async def play(self, audio, request_id, on_complete):
+    async def play(self, audio, request_id):
         self._audio = audio
+        self._request_id = request_id
         self._playing = True
 
 
@@ -78,6 +79,32 @@ def test_markdown_speed_and_playback_state_do_not_move_cursor():
         assert stopped["is_playing"] is False
         assert stopped["current_sentence_id"] == initial["current_sentence_id"]
         assert stopped["last_spoken_id"] == spoken_before_stop
+
+
+def test_playback_advances_only_after_matching_client_completion():
+    app = create_app(ReaderService(client=MockRimeClient(), playback=NoCompletionPlayback()))
+    with TestClient(app) as client:
+        upload(client, "sample.txt", b"First sentence. Second sentence.")
+        started = client.post("/playback/start").json()
+        request_id = started["request_id"]
+
+        assert request_id is not None
+        assert started["current_sentence_id"] == "sec_1.sent_1"
+
+        stale = client.post(
+            "/playback/complete",
+            json={"sentence_id": "sec_1.sent_1", "request_id": request_id + 1},
+        )
+        assert stale.status_code == 409
+        assert client.get("/playback/state").json()["current_sentence_id"] == "sec_1.sent_1"
+
+        completed = client.post(
+            "/playback/complete",
+            json={"sentence_id": "sec_1.sent_1", "request_id": request_id},
+        )
+        assert completed.status_code == 200
+        assert completed.json()["current_sentence_id"] == "sec_1.sent_2"
+        assert completed.json()["request_id"] != request_id
 
 
 def test_pdf_upload_and_invalid_uploads():

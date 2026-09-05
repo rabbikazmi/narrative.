@@ -1,4 +1,4 @@
-import asyncio
+import json
 
 import httpx
 import pytest
@@ -13,8 +13,12 @@ from backend.tts.rime_client import RimeClient
 def mock_transport(audio: bytes = b"wav-audio") -> httpx.MockTransport:
     async def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path == "/v1/rime-tts"
-        payload = httpx.Request.content
+        payload = json.loads(request.content)
         assert request.headers["authorization"] == "Bearer test-key"
+        assert payload["text"]
+        assert payload["speaker"] == "lyra"
+        assert payload["modelId"] == "coda"
+        assert payload["speedAlpha"] == 1.0
         return httpx.Response(200, content=audio, headers={"content-type": "audio/wav"})
 
     return httpx.MockTransport(handler)
@@ -34,7 +38,7 @@ async def test_rime_client_synthesizes_with_configured_request():
 
 
 @pytest.mark.asyncio
-async def test_natural_completion_renders_next_sentence():
+async def test_client_completion_renders_next_sentence():
     client = RimeClient(
         api_url="https://test/v1/rime-tts", api_key="test-key", model="coda", voice="lyra",
         transport=mock_transport(),
@@ -43,8 +47,30 @@ async def test_natural_completion_renders_next_sentence():
     await service.add_document(structure_document("sample.txt", "First sentence. Second sentence."))
     await service.start()
     assert (await service.store.read()).current_sentence_id == "sec_1.sent_1"
-    await asyncio.sleep(0.05)
+    first_request_id = service.playback.request_id()
+    assert first_request_id is not None
+    assert (await service.store.read()).current_sentence_id == "sec_1.sent_1"
+
+    await service.complete_playback("sec_1.sent_1", first_request_id)
     assert (await service.store.read()).current_sentence_id == "sec_1.sent_2"
+    assert service.playback.request_id() != first_request_id
+
+
+@pytest.mark.asyncio
+async def test_stale_client_completion_is_rejected():
+    client = RimeClient(
+        api_url="https://test/v1/rime-tts", api_key="test-key", model="coda", voice="lyra",
+        transport=mock_transport(),
+    )
+    service = ReaderService(client=client)
+    await service.add_document(structure_document("sample.txt", "First sentence. Second sentence."))
+    await service.start()
+    stale_request_id = service.playback.request_id()
+
+    await service.command(CommandIntent.SKIP)
+
+    with pytest.raises(ValueError, match="no longer current"):
+        await service.complete_playback("sec_1.sent_1", stale_request_id or 0)
 
 
 @pytest.mark.asyncio

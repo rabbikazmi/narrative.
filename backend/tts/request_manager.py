@@ -11,7 +11,7 @@ class RequestManager:
     """Cancels and generations TTS requests so late audio can never win."""
 
     def __init__(self, store: NavigationStateStore, controller: NavigationController,
-                 client: RimeClient, playback: PlaybackManager, on_natural_completion=None) -> None:
+                 client: RimeClient, playback: PlaybackManager) -> None:
         self.store = store
         self.controller = controller
         self.client = client
@@ -19,7 +19,6 @@ class RequestManager:
         self._generation = 0
         self._active: asyncio.Task[None] | None = None
         self._lock = asyncio.Lock()
-        self._on_natural_completion = on_natural_completion
 
     async def interrupt(self) -> None:
         async with self._lock:
@@ -66,11 +65,7 @@ class RequestManager:
                 return
             await self.controller.mark_spoken(sentence_id or "")
             await self.controller.set_playing(True)
-            await self.playback.play(
-                audio,
-                request_id,
-                on_complete=lambda: self._complete(sentence_id or ""),
-            )
+            await self.playback.play(audio, request_id)
             log_event("tts_request", request_id=request_id, sentence_id=sentence_id, status="played")
         except asyncio.CancelledError:
             log_event("tts_request", request_id=request_id, sentence_id=sentence_id, status="cancelled")
@@ -78,10 +73,4 @@ class RequestManager:
         except Exception:
             log_event("tts_request", request_id=request_id, sentence_id=sentence_id, status="failed")
             return
-
-    async def _complete(self, sentence_id: str) -> None:
-        await self.controller.set_playing(False)
-        state = await self.controller.advance_after_completion(sentence_id)
-        if self._on_natural_completion:
-            await self._on_natural_completion(sentence_id, state)
 

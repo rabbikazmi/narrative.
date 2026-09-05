@@ -42,6 +42,9 @@ export default function App() {
   const audio = useRef(new Audio());
   const audioUrl = useRef(null);
   const sourceUrl = useRef(null);
+  const currentAudio = useRef(null);
+  const playbackVersion = useRef(0);
+  const completionInFlight = useRef(false);
 
   const sentences = useMemo(() => document?.sections.flatMap((section) => section.sentences) ?? [], [document]);
   const foundIndex = sentences.findIndex((sentence) => sentence.id === activeSentenceId);
@@ -49,20 +52,21 @@ export default function App() {
 
   useEffect(() => {
     const player = audio.current;
-    const finish = () => setPhase("ready");
+    const finish = () => { void completeNaturalPlayback(); };
     const fail = () => { setPhase("ready"); setError("The generated audio could not be played."); };
     player.addEventListener("ended", finish);
     player.addEventListener("error", fail);
     return () => {
       player.removeEventListener("ended", finish);
       player.removeEventListener("error", fail);
+      playbackVersion.current += 1;
       player.pause();
       if (audioUrl.current) URL.revokeObjectURL(audioUrl.current);
       if (sourceUrl.current) URL.revokeObjectURL(sourceUrl.current);
     };
   }, []);
 
-  function stopLocalAudio() {
+  function clearLocalAudio() {
     const player = audio.current;
     player.pause();
     player.currentTime = 0;
@@ -71,6 +75,13 @@ export default function App() {
       URL.revokeObjectURL(audioUrl.current);
       audioUrl.current = null;
     }
+  }
+
+  function interruptLocalAudio() {
+    playbackVersion.current += 1;
+    currentAudio.current = null;
+    clearLocalAudio();
+    return playbackVersion.current;
   }
 
   async function uploadFile(file) {
@@ -82,7 +93,7 @@ export default function App() {
     }
     setError("");
     setPhase("uploading");
-    stopLocalAudio();
+    interruptLocalAudio();
     const form = new FormData();
     form.append("file", file);
     try {
@@ -110,15 +121,60 @@ export default function App() {
     }
   }
 
-  async function fetchAndPlayAudio() {
+  async function fetchAndPlayAudio(playbackState, expectedVersion = playbackVersion.current) {
+    const sentenceId = playbackState?.current_sentence_id;
+    const requestId = playbackState?.request_id;
+    if (!sentenceId || requestId == null) throw new Error("The server did not identify the generated audio.");
     const response = await api(`/playback/audio?t=${Date.now()}`);
     const blob = await response.blob();
     if (!blob.size) throw new Error("Rime returned an empty audio file.");
-    stopLocalAudio();
+    if (expectedVersion !== playbackVersion.current) return false;
+    clearLocalAudio();
     audioUrl.current = URL.createObjectURL(blob);
+    currentAudio.current = { sentenceId, requestId };
     audio.current.src = audioUrl.current;
     await audio.current.play();
+    if (expectedVersion !== playbackVersion.current) return false;
     setPhase("playing");
+    return true;
+  }
+
+  async function completeNaturalPlayback() {
+    const completed = currentAudio.current;
+    if (!completed || completionInFlight.current) return;
+
+    const expectedVersion = playbackVersion.current;
+    currentAudio.current = null;
+    completionInFlight.current = true;
+    setPhase("loading-audio");
+    try {
+      const response = await api("/playback/complete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sentence_id: completed.sentenceId,
+          request_id: completed.requestId,
+        }),
+      });
+      const nextState = await response.json();
+      if (expectedVersion !== playbackVersion.current) return;
+
+      setNavigation(nextState);
+      setActiveSentenceId(nextState.current_sentence_id);
+      if (nextState.current_sentence_id === completed.sentenceId || nextState.request_id == null) {
+        clearLocalAudio();
+        setPhase("ready");
+        return;
+      }
+      await fetchAndPlayAudio(nextState, expectedVersion);
+    } catch (completionError) {
+      if (expectedVersion === playbackVersion.current) {
+        setPhase("ready");
+        setError(completionError.message);
+      }
+    } finally {
+      completionInFlight.current = false;
+    }
   }
 
   async function startPlayback() {
@@ -131,9 +187,14 @@ export default function App() {
       return;
     }
     setPhase("loading-audio");
+    const expectedVersion = interruptLocalAudio();
     try {
-      await api("/playback/start", { method: "POST" });
-      await fetchAndPlayAudio();
+      const response = await api("/playback/start", { method: "POST" });
+      const nextState = await response.json();
+      if (expectedVersion !== playbackVersion.current) return;
+      setNavigation(nextState);
+      setActiveSentenceId(nextState.current_sentence_id);
+      await fetchAndPlayAudio(nextState, expectedVersion);
     } catch (playError) {
       setPhase("ready");
       setError(playError.message);
@@ -150,7 +211,7 @@ export default function App() {
   }
 
   async function stopPlayback() {
-    stopLocalAudio();
+    interruptLocalAudio();
     setPhase(document ? "ready" : "empty");
     try {
       const response = await api("/playback/stop", { method: "POST" });
@@ -161,7 +222,7 @@ export default function App() {
   async function command(text) {
     if (!document) return;
     setError("");
-    stopLocalAudio();
+    const expectedVersion = interruptLocalAudio();
     setPhase("loading-audio");
     try {
       const response = await api("/command", {
@@ -170,9 +231,10 @@ export default function App() {
         body: JSON.stringify({ text }),
       });
       const payload = await response.json();
+      if (expectedVersion !== playbackVersion.current) return;
       setNavigation(payload.state);
       setActiveSentenceId(payload.state.current_sentence_id);
-      await fetchAndPlayAudio();
+      await fetchAndPlayAudio({ ...payload.state, request_id: payload.request_id }, expectedVersion);
     } catch (commandError) {
       setPhase("ready");
       setError(commandError.message);

@@ -19,6 +19,6 @@ npm run dev
 
 Open `http://127.0.0.1:5173`. Vite proxies `/api` requests to the backend at `http://127.0.0.1:8000`.
 
-## Current integration boundary
+## Playback completion
 
-Upload, document rendering, current-sentence highlighting, playback controls, speed commands, section navigation, and Rime audio fetching are connected to the current backend API. Automatic continuous reading remains dependent on replacing the backend's simulated completion with a client-confirmed completion endpoint.
+Upload, document rendering, current-sentence highlighting, playback controls, speed commands, section navigation, and Rime audio fetching are connected to the backend API. When an audio clip ends naturally, the frontend sends its sentence and request IDs to `POST /playback/complete`, receives the next playback state, and starts the next sentence automatically. Interrupted or stale audio cannot advance the document.
