@@ -8,10 +8,10 @@ from backend.api.playback_routes import router as playback_router
 from backend.service import ReaderService
 
 
-def create_app() -> FastAPI:
+def create_app(reader: ReaderService | None = None) -> FastAPI:
     logging.basicConfig(level=logging.INFO)
     app = FastAPI(title="Voice Document Reader", version="0.1.0")
-    app.state.reader = ReaderService()
+    app.state.reader = reader or ReaderService()
     from backend.voice.asr import FasterWhisperRecognizer
     app.state.reader.recognizer = FasterWhisperRecognizer()
     app.include_router(document_router)

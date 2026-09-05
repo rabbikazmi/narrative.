@@ -7,3 +7,4 @@ uvicorn[standard]>=0.30
 pytest>=8.3
 pytest-asyncio>=0.24
 faster-whisper>=1.1
+python-dotenv>=1.0

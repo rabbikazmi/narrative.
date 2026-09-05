@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from backend.models.commands import CommandIntent
@@ -11,9 +11,17 @@ async def playback_state(request: Request):
     return (await request.app.state.reader.store.read()).model_dump()
 
 
+@router.get("/current")
+async def current_sentence(request: Request):
+    current = await request.app.state.reader.store.current_content()
+    if not current:
+        raise HTTPException(status_code=404, detail="No current sentence is available")
+    return current.model_dump()
+
+
 @router.get("/audio")
 async def audio(request: Request):
-    return StreamingResponse(request.app.state.reader.playback.audio_stream(), media_type="audio/mpeg")
+    return StreamingResponse(request.app.state.reader.playback.audio_stream(), media_type="audio/wav")
 
 
 @router.post("/start")
@@ -37,6 +45,5 @@ async def resume(request: Request):
 @router.post("/stop")
 async def stop(request: Request):
     reader = request.app.state.reader
-    await reader.requests.interrupt()
-    await reader.controller.apply(CommandIntent.PAUSE)
+    await reader.stop()
     return await playback_state(request)

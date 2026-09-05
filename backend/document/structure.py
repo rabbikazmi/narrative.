@@ -11,14 +11,27 @@ _SENTENCE_BOUNDARY = re.compile(r"(?<=[.!?])\s+|\n+")
 def structure_document(name: str, text: str) -> Document:
     """Build a deterministic document map from plain extracted text."""
     sections: list[Section] = []
-    raw_sections = [part.strip() for part in re.split(r"\n\s*\n", text) if part.strip()]
-    if not raw_sections:
-        raw_sections = [text.strip()] if text.strip() else []
+    blocks = [part.strip() for part in re.split(r"\n\s*\n", text) if part.strip()]
+    if not blocks:
+        blocks = [text.strip()] if text.strip() else []
 
-    for section_number, raw_section in enumerate(raw_sections, start=1):
+    sections_to_build: list[tuple[str | None, str]] = []
+    block_index = 0
+    while block_index < len(blocks):
+        block = blocks[block_index]
+        lines = [line.strip() for line in block.splitlines() if line.strip()]
+        if (len(lines) == 1 and not re.search(r"[.!?]$", lines[0])
+                and block_index + 1 < len(blocks)):
+            sections_to_build.append((lines[0], blocks[block_index + 1]))
+            block_index += 2
+        else:
+            sections_to_build.append((None, block))
+            block_index += 1
+
+    for section_number, (block_title, raw_section) in enumerate(sections_to_build, start=1):
         lines = [line.strip() for line in raw_section.splitlines() if line.strip()]
-        title = lines[0] if len(lines) > 1 and not re.search(r"[.!?]$", lines[0]) else None
-        body = " ".join(lines[1:] if title else lines)
+        title = block_title or (lines[0] if len(lines) > 1 and not re.search(r"[.!?]$", lines[0]) else None)
+        body = " ".join(lines[1:] if title and not block_title else lines)
         sentences = [part.strip() for part in _SENTENCE_BOUNDARY.split(body) if part.strip()]
         sections.append(Section(
             id=section_id(section_number),

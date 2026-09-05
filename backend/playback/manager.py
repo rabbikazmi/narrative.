@@ -18,20 +18,23 @@ class PlaybackManager:
 
     async def _complete(self, request_id: int, on_complete) -> None:
         try:
+            while not self._playing:
+                await asyncio.sleep(0.01)
             await asyncio.sleep(0)
-            if self._playing:
-                self._playing = False
-                log_event("natural_completion", request_id=request_id)
-                await on_complete()
+            self._playing = False
+            log_event("natural_completion", request_id=request_id)
+            await on_complete()
         except asyncio.CancelledError:
             return
 
     async def pause(self) -> None:
         self._playing = False
+        log_event("playback_paused")
 
     async def resume(self) -> None:
         if self._audio:
             self._playing = True
+            log_event("playback_resumed")
 
     async def stop(self) -> None:
         if self._playback_task and not self._playback_task.done():
@@ -46,6 +49,9 @@ class PlaybackManager:
 
     def is_playing(self) -> bool:
         return self._playing
+
+    def has_audio(self) -> bool:
+        return self._audio is not None
 
     async def audio_stream(self):
         if self._audio:

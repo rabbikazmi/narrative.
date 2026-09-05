@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 class CommandIntent(StrEnum):
     NEXT_SECTION = "NEXT_SECTION"
     PREVIOUS_SECTION = "PREVIOUS_SECTION"
+    PREVIOUS_SENTENCE = "PREVIOUS_SENTENCE"
     SKIP = "SKIP"
     REPEAT = "REPEAT"
     SLOW_DOWN = "SLOW_DOWN"

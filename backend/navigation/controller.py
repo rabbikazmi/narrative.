@@ -10,7 +10,7 @@ class NavigationController:
 
     async def apply(self, intent: CommandIntent) -> NavigationState:
         def mutation(state: NavigationState, document: Document | None) -> None:
-            sections = document.sections if document else []
+            sections = [section for section in (document.sections if document else []) if section.sentences]
             current_index = next((index for index, section in enumerate(sections)
                                   if section.id == state.current_section_id), 0)
             if intent == CommandIntent.NEXT_SECTION and sections:
@@ -21,6 +21,8 @@ class NavigationController:
                 section = sections[max(current_index - 1, 0)]
                 state.current_section_id = section.id
                 state.current_sentence_id = section.sentences[0].id if section.sentences else None
+            elif intent == CommandIntent.PREVIOUS_SENTENCE:
+                self._move_sentence(state, sections, -1)
             elif intent == CommandIntent.SKIP:
                 self._move_sentence(state, sections, 1)
             elif intent == CommandIntent.REPEAT:
@@ -56,8 +58,12 @@ class NavigationController:
             for sentence_index, sentence in enumerate(section.sentences):
                 if sentence.id == state.current_sentence_id:
                     target_index = sentence_index + delta
-                    if target_index < len(section.sentences):
+                    if 0 <= target_index < len(section.sentences):
                         state.current_sentence_id = section.sentences[target_index].id
+                    elif target_index < 0 and section_index > 0:
+                        previous_section = sections[section_index - 1]
+                        state.current_section_id = previous_section.id
+                        state.current_sentence_id = previous_section.sentences[-1].id
                     elif section_index + 1 < len(sections):
                         next_section = sections[section_index + 1]
                         state.current_section_id = next_section.id

@@ -1,6 +1,4 @@
 import asyncio
-from collections.abc import Awaitable, Callable
-
 from backend.document.normalizer import extract_numeric_spans
 from backend.navigation.controller import NavigationController
 from backend.navigation.state import NavigationStateStore
@@ -13,7 +11,7 @@ class RequestManager:
     """Cancels and generations TTS requests so late audio can never win."""
 
     def __init__(self, store: NavigationStateStore, controller: NavigationController,
-                 client: RimeClient, playback: PlaybackManager) -> None:
+                 client: RimeClient, playback: PlaybackManager, on_natural_completion=None) -> None:
         self.store = store
         self.controller = controller
         self.client = client
@@ -21,6 +19,7 @@ class RequestManager:
         self._generation = 0
         self._active: asyncio.Task[None] | None = None
         self._lock = asyncio.Lock()
+        self._on_natural_completion = on_natural_completion
 
     async def interrupt(self) -> None:
         async with self._lock:
@@ -47,10 +46,18 @@ class RequestManager:
         return request_id
 
     async def _run(self, request_id: int, speed: float, sentence_id: str | None, text: str) -> None:
-        log_event("tts_request", request_id=request_id, model="arcana", voice="mist", speed=speed,
+        log_event("tts_request", request_id=request_id,
+              model=getattr(self.client, "default_model", "configured"),
+              voice=getattr(self.client, "default_voice", "configured"), speed=speed,
                   sentence_id=sentence_id, text=text, status="started")
         try:
-            audio = await self.client.synthesize(text, "mist", "arcana", speed)
+            audio = await self.client.synthesize(
+                text,
+                getattr(self.client, "default_voice", None),
+                getattr(self.client, "default_model", None),
+                speed,
+            )
+            log_event("tts_request", request_id=request_id, sentence_id=sentence_id, status="audio_received")
             async with self._lock:
                 current_generation = self._generation
             current_state = await self.store.read()
@@ -70,9 +77,11 @@ class RequestManager:
             raise
         except Exception:
             log_event("tts_request", request_id=request_id, sentence_id=sentence_id, status="failed")
-            raise
+            return
 
     async def _complete(self, sentence_id: str) -> None:
         await self.controller.set_playing(False)
-        await self.controller.advance_after_completion(sentence_id)
+        state = await self.controller.advance_after_completion(sentence_id)
+        if self._on_natural_completion:
+            await self._on_natural_completion(sentence_id, state)
 

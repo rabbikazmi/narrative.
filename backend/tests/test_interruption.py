@@ -20,7 +20,7 @@ class DelayedClient:
         try:
             await self.release.wait()
         except asyncio.CancelledError:
-            await self.release.wait()
+            return text.encode()
         return text.encode()
 
 

@@ -2,7 +2,7 @@ import asyncio
 from collections.abc import Callable
 
 from backend.models.document import Document, Sentence
-from backend.models.navigation import NavigationState
+from backend.models.navigation import CurrentSentence, NavigationState
 from backend.utils.logger import log_event
 
 
@@ -18,9 +18,11 @@ class NavigationStateStore:
         async with self._lock:
             self._document = document
             first = self._first_sentence(document)
+            first_section_id = next((section.id for section in document.sections
+                                     if section.sentences), None)
             self._state = NavigationState(
                 document_id=document.id,
-                current_section_id=document.sections[0].id if document.sections else None,
+                current_section_id=first_section_id,
                 current_sentence_id=first.id if first else None,
             )
             log_event("state_changed", state=self._state.model_dump())
@@ -43,6 +45,23 @@ class NavigationStateStore:
     async def sentence_by_id(self, sentence_id: str | None) -> Sentence | None:
         async with self._lock:
             return self._find_sentence(sentence_id)
+
+    async def current_content(self) -> CurrentSentence | None:
+        async with self._lock:
+            if not self._document or not self._state.current_sentence_id:
+                return None
+            for section in self._document.sections:
+                for sentence in section.sentences:
+                    if sentence.id == self._state.current_sentence_id:
+                        return CurrentSentence(
+                            section_id=section.id,
+                            section_title=section.title,
+                            sentence_id=sentence.id,
+                            raw_text=sentence.raw_text,
+                            normalized_text=sentence.normalized_text,
+                            navigation=self._state.model_copy(deep=True),
+                        )
+            return None
 
     async def _current_sections(self) -> list:
         return self._document.sections if self._document else []

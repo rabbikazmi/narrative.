@@ -4,7 +4,7 @@ from datetime import datetime
 from num2words import num2words
 
 
-_NUMBER = re.compile(r"(?<![\w.])-?\d+(?:\.\d+)?(?![\w.])")
+_NUMBER = re.compile(r"(?<![\w.])-?\d+(?:\.\d+)?(?!\w)")
 _DATE = re.compile(r"\b(\d{4})-(\d{1,2})-(\d{1,2})\b")
 _ABBREVIATIONS = {"Dr.": "Doctor", "Mr.": "Mister", "Mrs.": "Misses", "etc.": "et cetera"}
 _DOMAIN_TERMS = {"API": "A P I", "PDF": "P D F", "TTS": "text to speech", "ASR": "speech recognition"}
@@ -27,13 +27,6 @@ def normalize_numbers(text: str) -> str:
 
 
 def normalize_dates(text: str) -> str:
-    def replace(match: re.Match[str]) -> str:
-        try:
-            value = datetime.strptime(match.group(0), "%Y-%m-%d")
-            return value.strftime("%B %-d, %Y")
-        except ValueError:
-            return match.group(0)
-
     # Windows has no %-d directive, so construct the date without platform formatting.
     def windows_safe_replace(match: re.Match[str]) -> str:
         year, month, day = (int(part) for part in match.groups())

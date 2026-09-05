@@ -10,8 +10,14 @@ def parse_file(filename: str, content: bytes) -> str:
     if suffix == ".pdf":
         import fitz
 
-        with fitz.open(stream=content, filetype="pdf") as pdf:
-            return "\n\n".join(page.get_text() for page in pdf).strip()
+        try:
+            with fitz.open(stream=content, filetype="pdf") as pdf:
+                return "\n\n".join(page.get_text() for page in pdf).strip()
+        except Exception as error:
+            raise ValueError("The PDF document could not be read") from error
     if suffix in {".txt", ".md"}:
-        return parse_text(content.decode("utf-8-sig"))
+        try:
+            return parse_text(content.decode("utf-8-sig"))
+        except UnicodeDecodeError as error:
+            raise ValueError("The text document must be UTF-8 encoded") from error
     raise ValueError("Only PDF, TXT, and MD documents are supported")
