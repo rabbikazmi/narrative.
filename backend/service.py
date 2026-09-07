@@ -61,7 +61,16 @@ class ReaderService:
             CommandIntent.SPEED_UP,
             CommandIntent.READ_NUMBERS,
         }:
-            await self.requests.render_current(numbers_only=intent == CommandIntent.READ_NUMBERS)
+            suppress_section_announcement = intent in {
+                CommandIntent.REPEAT,
+                CommandIntent.SLOW_DOWN,
+                CommandIntent.SPEED_UP,
+                CommandIntent.READ_NUMBERS,
+            }
+            await self.requests.render_current(
+                numbers_only=intent == CommandIntent.READ_NUMBERS,
+                announce_section=False if suppress_section_announcement else None,
+            )
         return state
 
     async def start(self) -> None:

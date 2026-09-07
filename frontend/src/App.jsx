@@ -1,6 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 const API = "/api";
+const BOUNDARY_PAUSE_MS = {
+  sentence: 10,
+  list_item: 100,
+  paragraph: 100,
+  page: 200,
+  section: 250,
+};
 
 const Icon = ({ name, size = 20 }) => {
   const paths = {
@@ -45,14 +52,36 @@ export default function App() {
   const currentAudio = useRef(null);
   const playbackVersion = useRef(0);
   const completionInFlight = useRef(false);
+  const transcript = useRef(null);
+  const sentenceElements = useRef(new Map());
 
   const sentences = useMemo(() => document?.sections.flatMap((section) => section.sentences) ?? [], [document]);
+  const sentenceById = useMemo(
+    () => new Map(sentences.map((sentence) => [sentence.id, sentence])),
+    [sentences],
+  );
+  const sentenceByIdRef = useRef(sentenceById);
+  sentenceByIdRef.current = sentenceById;
   const foundIndex = sentences.findIndex((sentence) => sentence.id === activeSentenceId);
+  const activeSentence = foundIndex >= 0 ? sentences[foundIndex] : null;
   const progress = navigation?.document_completed
     ? 100
     : sentences.length && foundIndex >= 0
       ? Math.round(((foundIndex + 1) / sentences.length) * 100)
       : 0;
+
+  useEffect(() => {
+    const container = transcript.current;
+    const sentence = sentenceElements.current.get(activeSentenceId);
+    if (!container || !sentence) return;
+
+    const containerBox = container.getBoundingClientRect();
+    const sentenceBox = sentence.getBoundingClientRect();
+    const top = container.scrollTop + sentenceBox.top - containerBox.top
+      - (container.clientHeight - sentenceBox.height) / 2;
+    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    container.scrollTo({ top: Math.max(0, top), behavior: reducedMotion ? "auto" : "smooth" });
+  }, [activeSentenceId]);
 
   useEffect(() => {
     const player = audio.current;
@@ -170,6 +199,12 @@ export default function App() {
         setPhase("ready");
         return;
       }
+      const nextSentence = sentenceByIdRef.current.get(nextState.current_sentence_id);
+      const transitionPause = BOUNDARY_PAUSE_MS[nextSentence?.boundary_before] ?? 0;
+      if (transitionPause) {
+        await new Promise((resolve) => window.setTimeout(resolve, transitionPause));
+        if (expectedVersion !== playbackVersion.current) return;
+      }
       await fetchAndPlayAudio(nextState, expectedVersion);
     } catch (completionError) {
       if (expectedVersion === playbackVersion.current) {
@@ -260,7 +295,49 @@ export default function App() {
       </header>
 
       <div className="reader-unit">
-      <section className="workspace">
+      <section className={`workspace ${document ? "has-document" : ""}`}>
+        {document && (
+          <aside className="section-rail" aria-label="Document reading map">
+            <div className="rail-heading">
+              <p className="rail-label">Reading map</p>
+              <span>{document.sections.length} {document.sections.length === 1 ? "section" : "sections"}</span>
+            </div>
+            <div className="section-list" ref={transcript}>
+              {document.sections.map((section, sectionIndex) => {
+                const isCurrentSection = section.sentences.some((sentence) => sentence.id === activeSentenceId);
+                return (
+                  <section className={`section-summary ${isCurrentSection ? "current" : ""}`} key={section.id}>
+                    <div className="section-heading">
+                      <span>{String(sectionIndex + 1).padStart(2, "0")}</span>
+                      <h2>{section.title || `Section ${sectionIndex + 1}`}</h2>
+                    </div>
+                    <ol className="sentence-list">
+                      {section.sentences.map((sentence) => {
+                        const isActive = sentence.id === activeSentenceId;
+                        return (
+                          <li
+                            className={`${sentence.block_type === "list_item" ? "list-item" : ""} ${isActive ? "active" : ""}`}
+                            key={sentence.id}
+                            ref={(node) => {
+                              if (node) sentenceElements.current.set(sentence.id, node);
+                              else sentenceElements.current.delete(sentence.id);
+                            }}
+                            aria-current={isActive ? "true" : undefined}
+                          >
+                            {sentence.block_type === "list_item" && (
+                              <span className="list-marker" aria-hidden="true">{sentence.list_marker || "•"}</span>
+                            )}
+                            <span>{sentence.raw_text}</span>
+                          </li>
+                        );
+                      })}
+                    </ol>
+                  </section>
+                );
+              })}
+            </div>
+          </aside>
+        )}
         <article className={`reader ${document ? "has-document" : ""}`}>
           {!document ? (
             <div className={`drop-zone ${dragging ? "dragging" : ""}`}
@@ -277,7 +354,7 @@ export default function App() {
               </button>
             </div>
           ) : (
-            <div className="source-shell">
+            <div className={`source-shell ${source?.type === "pdf" ? "pdf-source" : "text-source"}`}>
               <div className="source-bar">
                 <div><Icon name="file" size={18}/><span>{document.name}</span></div>
                 <button className="text-button" onClick={() => fileInput.current?.click()} type="button">Replace file</button>
@@ -310,6 +387,10 @@ export default function App() {
         <div className="progress-control"><div><small>Document completed</small><strong>{progress}%</strong></div><div className="progress-track" aria-label={`${progress}% complete`}><span style={{ width: `${progress}%` }} /></div></div>
       </footer>
       </div>
+
+      <p className="visually-hidden" aria-live="polite" aria-atomic="true">
+        {activeSentence ? `Current sentence: ${activeSentence.raw_text}` : ""}
+      </p>
 
       <input ref={fileInput} className="visually-hidden" type="file" accept=".pdf,.txt,.md,application/pdf,text/plain,text/markdown" onChange={(event) => uploadFile(event.target.files?.[0])} />
     </main>

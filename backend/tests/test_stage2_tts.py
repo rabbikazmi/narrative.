@@ -1,4 +1,5 @@
 import json
+import asyncio
 
 import httpx
 import pytest
@@ -99,6 +100,61 @@ async def test_unavailable_navigation_does_not_resynthesize_current_sentence():
     assert state.is_playing is False
     assert service.playback.request_id() is None
     assert service.playback.has_audio() is False
+
+
+@pytest.mark.asyncio
+async def test_next_sentence_is_prefetched_during_current_playback():
+    class PrefetchClient(RimeClient):
+        def __init__(self):
+            super().__init__(api_key="test-key", model="coda", voice="lyra")
+            self.calls: list[str] = []
+            self.second_started = asyncio.Event()
+
+        async def synthesize(self, text, voice=None, model=None, speed=1.0):
+            self.calls.append(text)
+            if len(self.calls) == 2:
+                self.second_started.set()
+            return f"audio:{text}".encode()
+
+    client = PrefetchClient()
+    service = ReaderService(client=client)
+    await service.add_document(structure_document("sample.txt", "First sentence. Second sentence."))
+
+    await service.start()
+    await asyncio.wait_for(client.second_started.wait(), timeout=1)
+    await asyncio.sleep(0)
+    first_request_id = service.playback.request_id()
+    await service.complete_playback("sec_1.sent_1", first_request_id or 0)
+
+    assert len(client.calls) == 2
+    assert service.playback.has_audio() is True
+    assert service.playback.request_id() != first_request_id
+
+
+@pytest.mark.asyncio
+async def test_section_title_is_included_when_entering_a_section():
+    class CapturingClient(RimeClient):
+        def __init__(self):
+            super().__init__(api_key="test-key", model="coda", voice="lyra")
+            self.calls: list[str] = []
+
+        async def synthesize(self, text, voice=None, model=None, speed=1.0):
+            self.calls.append(text)
+            return b"audio"
+
+    client = CapturingClient()
+    service = ReaderService(client=client)
+    await service.add_document(structure_document(
+        "sample.md",
+        "# Introduction\n\nOpening sentence.\n\n# Final section\n\nClosing sentence.",
+    ))
+
+    await service.start()
+    await asyncio.sleep(0)
+
+    assert client.calls[0] == "Section 1. Introduction. Opening sentence."
+    assert client.calls[1] == "Section 2. Final section. Closing sentence."
+    await service.requests.interrupt()
 
 
 @pytest.mark.asyncio

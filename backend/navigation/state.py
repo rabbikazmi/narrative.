@@ -46,6 +46,30 @@ class NavigationStateStore:
         async with self._lock:
             return self._find_sentence(sentence_id)
 
+    async def sentence_after(self, sentence_id: str | None) -> Sentence | None:
+        async with self._lock:
+            if not self._document or not sentence_id:
+                return None
+            sentences = [
+                sentence
+                for section in self._document.sections
+                for sentence in section.sentences
+            ]
+            for index, sentence in enumerate(sentences[:-1]):
+                if sentence.id == sentence_id:
+                    return sentences[index + 1].model_copy(deep=True)
+            return None
+
+    async def section_context(self, sentence_id: str | None) -> tuple[int, str | None] | None:
+        async with self._lock:
+            if not self._document or not sentence_id:
+                return None
+            populated_sections = [section for section in self._document.sections if section.sentences]
+            for index, section in enumerate(populated_sections, start=1):
+                if any(sentence.id == sentence_id for sentence in section.sentences):
+                    return index, section.title
+            return None
+
     async def current_content(self) -> CurrentSentence | None:
         async with self._lock:
             if not self._document or not self._state.current_sentence_id:
