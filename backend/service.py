@@ -40,8 +40,17 @@ class ReaderService:
                 await self.requests.render_current()
             return state
 
+        previous = await self.store.read()
         await self.requests.interrupt()
         state = await self.controller.apply(intent)
+        navigation_intents = {
+            CommandIntent.NEXT_SECTION,
+            CommandIntent.PREVIOUS_SECTION,
+            CommandIntent.PREVIOUS_SENTENCE,
+            CommandIntent.SKIP,
+        }
+        if intent in navigation_intents and state.current_sentence_id == previous.current_sentence_id:
+            return await self.controller.set_playing(False)
         if intent in {
             CommandIntent.NEXT_SECTION,
             CommandIntent.PREVIOUS_SECTION,
@@ -71,6 +80,10 @@ class ReaderService:
 
         await self.controller.set_playing(False)
         updated = await self.controller.advance_after_completion(sentence_id)
+        if updated.document_completed:
+            await self.playback.flush()
+            log_event("document_completed", document_id=updated.document_id)
+            return await self.store.read()
         if updated.current_sentence_id and updated.current_sentence_id != sentence_id:
             log_event("navigation_advanced", sentence_id=updated.current_sentence_id)
             await self.requests.render_current()

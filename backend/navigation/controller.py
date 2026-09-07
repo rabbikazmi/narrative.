@@ -13,6 +13,8 @@ class NavigationController:
             sections = [section for section in (document.sections if document else []) if section.sentences]
             current_index = next((index for index, section in enumerate(sections)
                                   if section.id == state.current_section_id), 0)
+            if intent != CommandIntent.PAUSE:
+                state.document_completed = False
             if intent == CommandIntent.NEXT_SECTION and sections:
                 section = sections[min(current_index + 1, len(sections) - 1)]
                 state.current_section_id = section.id
@@ -48,7 +50,14 @@ class NavigationController:
         def mutation(state: NavigationState, document: Document | None) -> None:
             if state.current_sentence_id != sentence_id:
                 return
-            sections = document.sections if document else []
+            sections = [section for section in (document.sections if document else []) if section.sentences]
+            final_sentence = sections[-1].sentences[-1] if sections else None
+            if final_sentence and final_sentence.id == sentence_id:
+                first_section = sections[0]
+                state.current_section_id = first_section.id
+                state.current_sentence_id = first_section.sentences[0].id
+                state.document_completed = True
+                return
             self._move_sentence(state, sections, 1)
         return await self.store.mutate(mutation)
 

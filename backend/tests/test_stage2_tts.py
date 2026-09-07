@@ -57,6 +57,51 @@ async def test_client_completion_renders_next_sentence():
 
 
 @pytest.mark.asyncio
+async def test_final_completion_resets_cursor_and_play_restarts_document():
+    client = RimeClient(
+        api_url="https://test/v1/rime-tts", api_key="test-key", model="coda", voice="lyra",
+        transport=mock_transport(),
+    )
+    service = ReaderService(client=client)
+    await service.add_document(structure_document("sample.txt", "Only sentence."))
+    await service.start()
+    final_request_id = service.playback.request_id()
+
+    completed = await service.complete_playback("sec_1.sent_1", final_request_id or 0)
+
+    assert completed.current_sentence_id == "sec_1.sent_1"
+    assert completed.document_completed is True
+    assert completed.is_playing is False
+    assert service.playback.request_id() is None
+    assert service.playback.has_audio() is False
+
+    await service.start()
+    restarted = await service.store.read()
+    assert restarted.current_sentence_id == "sec_1.sent_1"
+    assert restarted.document_completed is False
+    assert restarted.is_playing is True
+    assert service.playback.request_id() is not None
+
+
+@pytest.mark.asyncio
+async def test_unavailable_navigation_does_not_resynthesize_current_sentence():
+    client = RimeClient(
+        api_url="https://test/v1/rime-tts", api_key="test-key", model="coda", voice="lyra",
+        transport=mock_transport(),
+    )
+    service = ReaderService(client=client)
+    await service.add_document(structure_document("sample.txt", "Only sentence."))
+    await service.start()
+
+    state = await service.command(CommandIntent.NEXT_SECTION)
+
+    assert state.current_sentence_id == "sec_1.sent_1"
+    assert state.is_playing is False
+    assert service.playback.request_id() is None
+    assert service.playback.has_audio() is False
+
+
+@pytest.mark.asyncio
 async def test_stale_client_completion_is_rejected():
     client = RimeClient(
         api_url="https://test/v1/rime-tts", api_key="test-key", model="coda", voice="lyra",

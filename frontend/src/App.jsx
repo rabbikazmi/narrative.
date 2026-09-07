@@ -48,7 +48,11 @@ export default function App() {
 
   const sentences = useMemo(() => document?.sections.flatMap((section) => section.sentences) ?? [], [document]);
   const foundIndex = sentences.findIndex((sentence) => sentence.id === activeSentenceId);
-  const progress = sentences.length && foundIndex >= 0 ? Math.round(((foundIndex + 1) / sentences.length) * 100) : 0;
+  const progress = navigation?.document_completed
+    ? 100
+    : sentences.length && foundIndex >= 0
+      ? Math.round(((foundIndex + 1) / sentences.length) * 100)
+      : 0;
 
   useEffect(() => {
     const player = audio.current;
@@ -161,7 +165,7 @@ export default function App() {
 
       setNavigation(nextState);
       setActiveSentenceId(nextState.current_sentence_id);
-      if (nextState.current_sentence_id === completed.sentenceId || nextState.request_id == null) {
+      if (nextState.document_completed || nextState.current_sentence_id === completed.sentenceId || nextState.request_id == null) {
         clearLocalAudio();
         setPhase("ready");
         return;
@@ -234,6 +238,10 @@ export default function App() {
       if (expectedVersion !== playbackVersion.current) return;
       setNavigation(payload.state);
       setActiveSentenceId(payload.state.current_sentence_id);
+      if (payload.request_id == null) {
+        setPhase("ready");
+        return;
+      }
       await fetchAndPlayAudio({ ...payload.state, request_id: payload.request_id }, expectedVersion);
     } catch (commandError) {
       setPhase("ready");
@@ -241,7 +249,7 @@ export default function App() {
     }
   }
 
-  const statusLabel = phase === "loading-audio" ? "Preparing voice" : phase === "playing" ? "Reading aloud" : phase === "paused" ? "Paused" : phase === "uploading" ? "Reading document" : document ? "Ready" : "No document";
+  const statusLabel = phase === "loading-audio" ? "Preparing voice" : phase === "playing" ? "Reading aloud" : phase === "paused" ? "Paused" : phase === "uploading" ? "Reading document" : navigation?.document_completed ? "Completed" : document ? "Ready" : "No document";
 
   return (
     <main className="app-shell">
