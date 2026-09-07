@@ -12,7 +12,9 @@ def parse_file(filename: str, content: bytes) -> str:
 
         try:
             with fitz.open(stream=content, filetype="pdf") as pdf:
-                return "\n\n".join(page.get_text() for page in pdf).strip()
+                # Form-feed is retained internally so document structuring can
+                # distinguish a real page transition from a paragraph break.
+                return "\f".join(page.get_text().strip() for page in pdf).strip()
         except Exception as error:
             raise ValueError("The PDF document could not be read") from error
     if suffix in {".txt", ".md"}:

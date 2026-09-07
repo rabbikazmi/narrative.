@@ -10,7 +10,10 @@ from backend.voice.intent import classify_intent
 @pytest.mark.asyncio
 async def test_navigation_transitions_and_speed():
     store = NavigationStateStore()
-    await store.load_document(structure_document("x.txt", "One.\n\nTwo."))
+    await store.load_document(structure_document(
+        "x.txt",
+        "First section\n\nOne.\n\nSecond section\n\nTwo.",
+    ))
     controller = NavigationController(store)
     await controller.apply(CommandIntent.NEXT_SECTION)
     assert (await store.read()).current_section_id == "sec_2"

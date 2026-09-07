@@ -112,12 +112,16 @@ def test_pdf_upload_and_invalid_uploads():
     pdf = fitz.open()
     page = pdf.new_page()
     page.insert_text((72, 72), "PDF sentence one. PDF sentence two.")
+    second_page = pdf.new_page()
+    second_page.insert_text((72, 72), "PDF sentence three.")
     pdf_bytes = pdf.tobytes()
     pdf.close()
 
     with TestClient(app) as client:
         document = upload(client, "sample.pdf", pdf_bytes)
         assert document["sections"][0]["sentences"][0]["raw_text"] == "PDF sentence one."
+        assert document["sections"][0]["sentences"][2]["page_number"] == 2
+        assert document["sections"][0]["sentences"][2]["boundary_before"] == "page"
 
         empty = client.post("/documents/upload", files={"file": ("empty.txt", b"", "text/plain")})
         assert empty.status_code == 400

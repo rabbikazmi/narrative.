@@ -20,3 +20,44 @@ def test_number_spans_are_independent_from_normalization():
 def test_text_parser_accepts_text_files():
     assert parse_text("hello\r\nworld") == "hello\nworld"
     assert parse_file("notes.txt", b"hello") == "hello"
+
+
+def test_structure_preserves_paragraph_and_list_boundaries():
+    document = structure_document(
+        "guide.md",
+        "# Getting started\n\nFirst sentence. Second sentence.\n\n"
+        "- Upload a document\n- Press play\n\nFinal paragraph.",
+    )
+
+    section = document.sections[0]
+    assert section.title == "Getting started"
+    assert [sentence.boundary_before for sentence in section.sentences] == [
+        "section", "sentence", "list_item", "list_item", "paragraph",
+    ]
+    assert section.sentences[2].block_type == "list_item"
+    assert section.sentences[2].list_marker == "-"
+    assert section.sentences[2].block_id != section.sentences[3].block_id
+
+
+def test_structure_retains_page_transitions():
+    document = structure_document(
+        "pages.pdf",
+        "First page sentence.\fSecond page sentence.",
+    )
+
+    first, second = document.sections[0].sentences
+    assert first.page_number == 1
+    assert second.page_number == 2
+    assert second.boundary_before == "page"
+
+
+def test_paragraphs_do_not_become_false_sections():
+    document = structure_document(
+        "essay.txt",
+        "First paragraph.\n\nSecond paragraph.",
+    )
+
+    assert len(document.sections) == 1
+    assert [sentence.boundary_before for sentence in document.sections[0].sentences] == [
+        "section", "paragraph",
+    ]
