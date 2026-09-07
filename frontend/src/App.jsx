@@ -694,8 +694,11 @@ export default function App() {
         <div className="transport">
           <button className="icon-button" onClick={stopPlayback} disabled={!document || phase === "ready" || phase === "uploading"} aria-label="Stop"><Icon name="stop" size={17}/></button>
           <button className="play-button" onClick={phase === "playing" ? pausePlayback : startPlayback} disabled={!document || controlsBusy} aria-label={phase === "playing" ? "Pause" : "Play"}><Icon name={phase === "playing" ? "pause" : "play"} size={24}/></button>
-          <button className={`voice-button ${microphoneEnabled ? "listening" : ""} ${voiceProcessing ? "processing" : ""}`} onClick={microphoneEnabled ? () => stopContinuousListening(true) : startContinuousListening} disabled={!document || microphoneStarting} aria-label={microphoneEnabled ? "Turn continuous voice control off" : "Turn continuous voice control on"} aria-pressed={microphoneEnabled}><Icon name={microphoneEnabled ? "stop" : "mic"} size={18}/></button>
           <button className="icon-button" onClick={() => command("next section")} disabled={!document || controlsBusy} aria-label="Next section"><Icon name="next" size={19}/></button>
+        </div>
+        <div className="voice-control">
+          <button className={`voice-button ${microphoneEnabled ? "listening" : ""} ${voiceProcessing ? "processing" : ""}`} onClick={microphoneEnabled ? () => stopContinuousListening(true) : startContinuousListening} disabled={!document || microphoneStarting} aria-label={microphoneEnabled ? "Turn continuous voice control off" : "Turn continuous voice control on"} aria-pressed={microphoneEnabled}><Icon name={microphoneEnabled ? "stop" : "mic"} size={18}/></button>
+          <span><small>Voice control</small>{microphoneStarting ? "Starting…" : microphoneEnabled ? "Listening" : "Off"}</span>
         </div>
         <div className="speed-control" aria-label="Reading speed">
           <button onClick={() => command("slow down")} disabled={!document || controlsBusy || (navigation?.playback_speed ?? 1) <= 0.5} aria-label="Slow down"><Icon name="minus" size={16}/></button>
