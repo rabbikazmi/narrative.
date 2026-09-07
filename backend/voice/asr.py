@@ -60,8 +60,10 @@ class FasterWhisperRecognizer:
         segments, _ = model.transcribe(
             path,
             language=self.language,
-            beam_size=5,
+            beam_size=1,
+            temperature=0,
             vad_filter=True,
+            vad_parameters={"min_silence_duration_ms": 200},
             condition_on_previous_text=False,
             initial_prompt=f"Voice command for a document reader. Valid commands: {COMMAND_VOCABULARY}.",
             hotwords=COMMAND_VOCABULARY,

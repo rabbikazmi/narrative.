@@ -8,7 +8,7 @@ const BOUNDARY_PAUSE_MS = {
   page: 200,
   section: 250,
 };
-const VOICE_SILENCE_MS = 700;
+const VOICE_SILENCE_MS = 300;
 const MAX_VOICE_RECORDING_MS = 6000;
 
 const Icon = ({ name, size = 20 }) => {
@@ -54,6 +54,8 @@ export default function App() {
   const [microphoneEnabled, setMicrophoneEnabled] = useState(false);
   const [microphoneStarting, setMicrophoneStarting] = useState(false);
   const [voiceProcessing, setVoiceProcessing] = useState(false);
+  const phaseRef = useRef(phase);
+  phaseRef.current = phase;
   const fileInput = useRef(null);
   const audio = useRef(new Audio());
   const audioUrl = useRef(null);
@@ -71,6 +73,7 @@ export default function App() {
   const microphonePreference = useRef(null);
   const voiceQueue = useRef([]);
   const voiceRequestInFlight = useRef(false);
+  const voiceAbortController = useRef(null);
   const inputAnalyser = useRef(null);
   const inputAudioContext = useRef(null);
   const inputMonitorFrame = useRef(null);
@@ -78,6 +81,8 @@ export default function App() {
   const recordingStartedAt = useRef(0);
   const lastVoiceAt = useRef(0);
   const fallbackRecording = useRef(false);
+  const voiceInterruption = useRef(null);
+  const voicePauseRequest = useRef(null);
 
   const sentences = useMemo(() => document?.sections.flatMap((section) => section.sentences) ?? [], [document]);
   const sentenceById = useMemo(
@@ -161,12 +166,19 @@ export default function App() {
   }
 
   function stopContinuousListening(rememberPreference = true) {
+    const shouldRestorePlayback = rememberPreference && Boolean(voiceInterruption.current);
     microphoneEnabledRef.current = false;
     if (rememberPreference) microphonePreference.current = false;
     setMicrophoneEnabled(false);
     setMicrophoneStarting(false);
     setVoiceProcessing(false);
     voiceQueue.current = [];
+    voiceAbortController.current?.abort();
+    voiceAbortController.current = null;
+    if (!rememberPreference) {
+      voiceInterruption.current = null;
+      voicePauseRequest.current = null;
+    }
     const recorder = mediaRecorder.current;
     if (recorder && recorder.state !== "inactive") {
       recorder.onstop = null;
@@ -175,6 +187,64 @@ export default function App() {
     mediaRecorder.current = null;
     recordedChunks.current = [];
     releaseMicrophone();
+    if (shouldRestorePlayback) void restoreAfterIgnoredSpeech();
+  }
+
+  function pauseForDetectedSpeech() {
+    if (voiceInterruption.current) return;
+    const previousPhase = phaseRef.current;
+    const wasPlaying = previousPhase === "playing";
+    voiceInterruption.current = { previousPhase, wasPlaying };
+    if (!wasPlaying) {
+      voicePauseRequest.current = Promise.resolve();
+      return;
+    }
+
+    // Stop audible output immediately; the API call synchronizes backend state
+    // while the current recording finishes and Whisper transcribes it.
+    playbackVersion.current += 1;
+    audio.current.pause();
+    phaseRef.current = "voice-interrupted";
+    setPhase("voice-interrupted");
+    voicePauseRequest.current = api("/playback/pause", { method: "POST" })
+      .then((response) => response.json())
+      .then((nextState) => setNavigation(nextState));
+  }
+
+  async function restoreAfterIgnoredSpeech() {
+    const interruption = voiceInterruption.current;
+    voiceInterruption.current = null;
+    const pauseRequest = voicePauseRequest.current;
+    voicePauseRequest.current = null;
+    try { await pauseRequest; } catch { /* A resume request below re-synchronizes state. */ }
+
+    if (!interruption?.wasPlaying) {
+      const restoredPhase = interruption?.previousPhase ?? (document ? "ready" : "empty");
+      phaseRef.current = restoredPhase;
+      setPhase(restoredPhase);
+      return;
+    }
+
+    try {
+      const response = await api("/playback/resume", { method: "POST" });
+      const nextState = await response.json();
+      setNavigation(nextState);
+      setActiveSentenceId(nextState.current_sentence_id);
+      if (audio.current.src && currentAudio.current?.sentenceId === nextState.current_sentence_id) {
+        await audio.current.play();
+        phaseRef.current = "playing";
+        setPhase("playing");
+      } else if (nextState.request_id != null) {
+        await fetchAndPlayAudio(nextState, playbackVersion.current);
+      } else {
+        phaseRef.current = "ready";
+        setPhase("ready");
+      }
+    } catch (recoveryError) {
+      phaseRef.current = "ready";
+      setPhase("ready");
+      setError(`Playback could not resume after listening: ${recoveryError.message}`);
+    }
   }
 
   function finishRecordingWindow() {
@@ -188,6 +258,8 @@ export default function App() {
   }
 
   async function applyVoiceCommand(payload) {
+    voiceInterruption.current = null;
+    voicePauseRequest.current = null;
     setVoiceFeedback(`Heard “${payload.transcript}”`);
     setNavigation(payload.state);
     setActiveSentenceId(payload.state.current_sentence_id);
@@ -227,21 +299,28 @@ export default function App() {
     const blob = voiceQueue.current.shift();
     voiceRequestInFlight.current = true;
     setVoiceProcessing(true);
+    const requestController = new AbortController();
+    voiceAbortController.current = requestController;
     const extension = blob.type.includes("mp4") ? "m4a" : blob.type.includes("ogg") ? "ogg" : "webm";
     const form = new FormData();
     form.append("audio", blob, `command.${extension}`);
     try {
-      const response = await api("/command/voice", { method: "POST", body: form });
+      await voicePauseRequest.current;
+      const response = await api("/command/voice", { method: "POST", body: form, signal: requestController.signal });
       const payload = await response.json();
+      if (!microphoneEnabledRef.current || requestController.signal.aborted) return;
       voiceQueue.current = [];
       await applyVoiceCommand(payload);
     } catch (voiceError) {
+      if (voiceError.name === "AbortError") return;
       // Silence and ordinary speech are expected while continuously listening.
+      await restoreAfterIgnoredSpeech();
       if (voiceError.status !== 422) {
         setError(voiceError.message);
         if (voiceError.status === 503) stopContinuousListening(false);
       }
     } finally {
+      if (voiceAbortController.current === requestController) voiceAbortController.current = null;
       voiceRequestInFlight.current = false;
       setVoiceProcessing(false);
       if (microphoneEnabledRef.current && voiceQueue.current.length) void processVoiceQueue();
@@ -261,7 +340,10 @@ export default function App() {
     if (Math.sqrt(energy / samples.length) > 0.018) {
       recordingHadSpeech.current = true;
       lastVoiceAt.current = now;
-      if (!mediaRecorder.current) startRecordingWindow(false);
+      if (!mediaRecorder.current) {
+        pauseForDetectedSpeech();
+        startRecordingWindow(false);
+      }
     } else if (
       mediaRecorder.current
       && recordingHadSpeech.current
@@ -520,7 +602,7 @@ export default function App() {
   }
 
   const controlsBusy = ["loading-audio", "uploading"].includes(phase);
-  const statusLabel = voiceProcessing ? "Understanding voice…" : phase === "loading-audio" ? "Preparing voice" : phase === "playing" ? "Reading aloud" : phase === "paused" ? "Paused" : phase === "uploading" ? "Reading document" : navigation?.document_completed ? "Completed" : document ? "Ready" : "No document";
+  const statusLabel = voiceProcessing ? "Understanding voice…" : phase === "voice-interrupted" ? "Listening…" : phase === "loading-audio" ? "Preparing voice" : phase === "playing" ? "Reading aloud" : phase === "paused" ? "Paused" : phase === "uploading" ? "Reading document" : navigation?.document_completed ? "Completed" : document ? "Ready" : "No document";
 
   return (
     <main className="app-shell">

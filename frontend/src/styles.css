@@ -122,6 +122,7 @@ button:focus-visible, a:focus-visible { outline: 3px solid rgba(95, 134, 166, 0.
 .status-dot { width: 10px; height: 10px; background: #a8b5c5; border-radius: 50%; }
 .status-dot.playing { background: #a9d8c1; box-shadow: 0 0 0 5px rgba(169,216,193,.1); animation: pulse 1.5s infinite; }
 .status-dot.paused { background: #f0cf88; }
+.status-dot.voice-interrupted { background: #f0cf88; box-shadow: 0 0 0 5px rgba(240,207,136,.1); }
 .status-copy { min-width: 0; display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .status-copy em { display: block; margin-top: 3px; overflow: hidden; color: rgba(255,255,255,.62); font-size: .67rem; font-style: normal; text-overflow: ellipsis; }
 .progress-control { padding: 17px 22px; display: flex; flex-direction: column; justify-content: center; border-left: 1px solid rgba(255,255,255,.16); }

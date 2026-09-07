@@ -117,6 +117,8 @@ async def test_faster_whisper_adapter_decodes_injected_model_and_removes_temp_fi
             seen_path = path
             assert Path(path).read_bytes() == b"webm-audio"
             assert options["vad_filter"] is True
+            assert options["beam_size"] == 1
+            assert options["vad_parameters"]["min_silence_duration_ms"] == 200
             assert "pause" in options["hotwords"]
             return iter([SimpleNamespace(text=" pause ")]), SimpleNamespace()
 
