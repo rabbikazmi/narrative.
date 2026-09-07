@@ -21,9 +21,11 @@
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-pip install -e .
+pip install -e ".[asr]"
 pytest
 uvicorn backend.main:app --reload
 ```
 
-Set `RIME_API_KEY` and, when needed, `RIME_API_URL` through the environment. The local prototype uses a deterministic in-memory audio fallback when no API key is configured.
+Copy `backend/.env.example` to `backend/.env`, then set the Rime credentials. Faster Whisper is loaded lazily when the first recorded command reaches `POST /command/voice`; the first use can therefore take longer while the selected model is downloaded and loaded. The CPU defaults use the `base` English model with `int8` computation. Override the `WHISPER_*` values in `backend/.env` when another device, model, or language is needed.
+
+Supported voice commands include start, next/previous section, next/previous sentence, repeat, pause, resume, stop, slower, faster, and read numbers.

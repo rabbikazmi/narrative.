@@ -94,7 +94,7 @@ button:focus-visible, a:focus-visible { outline: 3px solid rgba(95, 134, 166, 0.
   display: grid;
   grid-template-columns:
     minmax(180px, 1.05fr)
-    minmax(210px, .9fr)
+    minmax(250px, 1fr)
     minmax(145px, .68fr)
     minmax(175px, .78fr)
     minmax(220px, 1.15fr);
@@ -111,6 +111,10 @@ button:focus-visible, a:focus-visible { outline: 3px solid rgba(95, 134, 166, 0.
 .icon-button { width: 25px; height: 25px; display: grid; place-items: center; border: 0; background: transparent; color: white; }
 .icon-button:hover:not(:disabled) { background: rgba(255,255,255,.09); }
 .play-button { width: 50px; height: 50px; display: grid; place-items: center; border-radius: 50%; border: 0; background: var(--powder); color: var(--midnight); }
+.voice-button { width: 36px; height: 36px; flex: 0 0 auto; display: grid; place-items: center; border-radius: 50%; border: 1px solid rgba(255,255,255,.34); background: transparent; color: white; transition: background .16s ease, color .16s ease, transform .16s ease; }
+.voice-button:hover:not(:disabled) { background: rgba(255,255,255,.1); }
+.voice-button.listening { border-color: #f0cf88; background: #f0cf88; color: var(--midnight); animation: microphone-pulse 1.1s ease-in-out infinite; }
+.voice-button.processing { box-shadow: 0 0 0 7px rgba(143,182,216,.16); }
 .speed-control { min-width: 160px; display: grid; grid-template-columns: 36px 1fr 36px; place-items: center; padding: 0 10px; border-left: 1px solid rgba(255,255,255,.16); }
 .speed-control button { width: 30px; height: 30px; display: grid; place-items: center; border: 1px solid rgba(255,255,255,.28); background: transparent; color: white; }
 .speed-control span { text-align: center; font-weight: 700; }
@@ -118,6 +122,8 @@ button:focus-visible, a:focus-visible { outline: 3px solid rgba(95, 134, 166, 0.
 .status-dot { width: 10px; height: 10px; background: #a8b5c5; border-radius: 50%; }
 .status-dot.playing { background: #a9d8c1; box-shadow: 0 0 0 5px rgba(169,216,193,.1); animation: pulse 1.5s infinite; }
 .status-dot.paused { background: #f0cf88; }
+.status-copy { min-width: 0; display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.status-copy em { display: block; margin-top: 3px; overflow: hidden; color: rgba(255,255,255,.62); font-size: .67rem; font-style: normal; text-overflow: ellipsis; }
 .progress-control { padding: 17px 22px; display: flex; flex-direction: column; justify-content: center; border-left: 1px solid rgba(255,255,255,.16); }
 .progress-control > div:first-child { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; }
 .progress-control small { min-width: 0; overflow-wrap: anywhere; }
@@ -129,6 +135,7 @@ button:focus-visible, a:focus-visible { outline: 3px solid rgba(95, 134, 166, 0.
 .visually-hidden { position: absolute!important; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
 
 @keyframes pulse { 50% { transform: scale(.74); opacity: .68; } }
+@keyframes microphone-pulse { 50% { transform: scale(.9); box-shadow: 0 0 0 7px rgba(240,207,136,.12); } }
 
 @media (max-width: 980px) {
   .app-shell { padding: 16px; }

@@ -39,6 +39,8 @@ class ReaderService:
             else:
                 await self.requests.render_current()
             return state
+        if intent == CommandIntent.STOP:
+            return await self.stop()
 
         previous = await self.store.read()
         await self.requests.interrupt()

@@ -8,6 +8,8 @@ const BOUNDARY_PAUSE_MS = {
   page: 200,
   section: 250,
 };
+const VOICE_SILENCE_MS = 700;
+const MAX_VOICE_RECORDING_MS = 6000;
 
 const Icon = ({ name, size = 20 }) => {
   const paths = {
@@ -16,6 +18,7 @@ const Icon = ({ name, size = 20 }) => {
     pause: <><path d="M9 5v14"/><path d="M15 5v14"/></>,
     stop: <rect x="6" y="6" width="12" height="12" rx="1" fill="currentColor" stroke="none" />,
     next: <><path d="m7 5 9 7-9 7Z" fill="currentColor" stroke="none"/><path d="M18 5v14"/></>,
+    mic: <><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0"/><path d="M12 17.5V21"/><path d="M9 21h6"/></>,
     minus: <path d="M5 12h14"/>,
     plus: <><path d="M5 12h14"/><path d="M12 5v14"/></>,
     file: <><path d="M7 3h7l4 4v14H7Z"/><path d="M14 3v5h5"/></>,
@@ -32,7 +35,9 @@ async function api(path, options) {
       const payload = await response.json();
       message = payload.detail || message;
     } catch { /* Use the readable fallback. */ }
-    throw new Error(message);
+    const error = new Error(message);
+    error.status = response.status;
+    throw error;
   }
   return response;
 }
@@ -45,6 +50,10 @@ export default function App() {
   const [phase, setPhase] = useState("empty");
   const [error, setError] = useState("");
   const [dragging, setDragging] = useState(false);
+  const [voiceFeedback, setVoiceFeedback] = useState("");
+  const [microphoneEnabled, setMicrophoneEnabled] = useState(false);
+  const [microphoneStarting, setMicrophoneStarting] = useState(false);
+  const [voiceProcessing, setVoiceProcessing] = useState(false);
   const fileInput = useRef(null);
   const audio = useRef(new Audio());
   const audioUrl = useRef(null);
@@ -54,6 +63,21 @@ export default function App() {
   const completionInFlight = useRef(false);
   const transcript = useRef(null);
   const sentenceElements = useRef(new Map());
+  const mediaRecorder = useRef(null);
+  const microphoneStream = useRef(null);
+  const recordedChunks = useRef([]);
+  const recordingTimer = useRef(null);
+  const microphoneEnabledRef = useRef(false);
+  const microphonePreference = useRef(null);
+  const voiceQueue = useRef([]);
+  const voiceRequestInFlight = useRef(false);
+  const inputAnalyser = useRef(null);
+  const inputAudioContext = useRef(null);
+  const inputMonitorFrame = useRef(null);
+  const recordingHadSpeech = useRef(false);
+  const recordingStartedAt = useRef(0);
+  const lastVoiceAt = useRef(0);
+  const fallbackRecording = useRef(false);
 
   const sentences = useMemo(() => document?.sections.flatMap((section) => section.sentences) ?? [], [document]);
   const sentenceById = useMemo(
@@ -94,6 +118,7 @@ export default function App() {
       player.removeEventListener("error", fail);
       playbackVersion.current += 1;
       player.pause();
+      stopContinuousListening(false);
       if (audioUrl.current) URL.revokeObjectURL(audioUrl.current);
       if (sourceUrl.current) URL.revokeObjectURL(sourceUrl.current);
     };
@@ -117,6 +142,212 @@ export default function App() {
     return playbackVersion.current;
   }
 
+  function releaseMicrophone() {
+    if (recordingTimer.current) {
+      window.clearTimeout(recordingTimer.current);
+      recordingTimer.current = null;
+    }
+    microphoneStream.current?.getTracks().forEach((track) => track.stop());
+    microphoneStream.current = null;
+    if (inputMonitorFrame.current) {
+      window.cancelAnimationFrame(inputMonitorFrame.current);
+      inputMonitorFrame.current = null;
+    }
+    inputAnalyser.current = null;
+    if (inputAudioContext.current) {
+      void inputAudioContext.current.close();
+      inputAudioContext.current = null;
+    }
+  }
+
+  function stopContinuousListening(rememberPreference = true) {
+    microphoneEnabledRef.current = false;
+    if (rememberPreference) microphonePreference.current = false;
+    setMicrophoneEnabled(false);
+    setMicrophoneStarting(false);
+    setVoiceProcessing(false);
+    voiceQueue.current = [];
+    const recorder = mediaRecorder.current;
+    if (recorder && recorder.state !== "inactive") {
+      recorder.onstop = null;
+      recorder.stop();
+    }
+    mediaRecorder.current = null;
+    recordedChunks.current = [];
+    releaseMicrophone();
+  }
+
+  function finishRecordingWindow() {
+    const recorder = mediaRecorder.current;
+    if (!recorder || recorder.state === "inactive") return;
+    if (recordingTimer.current) {
+      window.clearTimeout(recordingTimer.current);
+      recordingTimer.current = null;
+    }
+    recorder.stop();
+  }
+
+  async function applyVoiceCommand(payload) {
+    setVoiceFeedback(`Heard “${payload.transcript}”`);
+    setNavigation(payload.state);
+    setActiveSentenceId(payload.state.current_sentence_id);
+
+    if (payload.intent === "PAUSE") {
+      playbackVersion.current += 1;
+      audio.current.pause();
+      setPhase("paused");
+      return;
+    }
+    if (payload.intent === "STOP") {
+      interruptLocalAudio();
+      setPhase("ready");
+      return;
+    }
+    if (
+      payload.intent === "RESUME"
+      && audio.current.src
+      && currentAudio.current?.sentenceId === payload.state.current_sentence_id
+    ) {
+      await audio.current.play();
+      setPhase("playing");
+      return;
+    }
+
+    const expectedVersion = interruptLocalAudio();
+    if (payload.request_id == null) {
+      setPhase("ready");
+      return;
+    }
+    setPhase("loading-audio");
+    await fetchAndPlayAudio({ ...payload.state, request_id: payload.request_id }, expectedVersion);
+  }
+
+  async function processVoiceQueue() {
+    if (voiceRequestInFlight.current || !microphoneEnabledRef.current || !voiceQueue.current.length) return;
+    const blob = voiceQueue.current.shift();
+    voiceRequestInFlight.current = true;
+    setVoiceProcessing(true);
+    const extension = blob.type.includes("mp4") ? "m4a" : blob.type.includes("ogg") ? "ogg" : "webm";
+    const form = new FormData();
+    form.append("audio", blob, `command.${extension}`);
+    try {
+      const response = await api("/command/voice", { method: "POST", body: form });
+      const payload = await response.json();
+      voiceQueue.current = [];
+      await applyVoiceCommand(payload);
+    } catch (voiceError) {
+      // Silence and ordinary speech are expected while continuously listening.
+      if (voiceError.status !== 422) {
+        setError(voiceError.message);
+        if (voiceError.status === 503) stopContinuousListening(false);
+      }
+    } finally {
+      voiceRequestInFlight.current = false;
+      setVoiceProcessing(false);
+      if (microphoneEnabledRef.current && voiceQueue.current.length) void processVoiceQueue();
+    }
+  }
+
+  function monitorMicrophoneInput() {
+    if (!microphoneEnabledRef.current || !inputAnalyser.current) return;
+    const samples = new Uint8Array(inputAnalyser.current.fftSize);
+    inputAnalyser.current.getByteTimeDomainData(samples);
+    let energy = 0;
+    for (const sample of samples) {
+      const amplitude = (sample - 128) / 128;
+      energy += amplitude * amplitude;
+    }
+    const now = performance.now();
+    if (Math.sqrt(energy / samples.length) > 0.018) {
+      recordingHadSpeech.current = true;
+      lastVoiceAt.current = now;
+      if (!mediaRecorder.current) startRecordingWindow(false);
+    } else if (
+      mediaRecorder.current
+      && recordingHadSpeech.current
+      && now - lastVoiceAt.current >= VOICE_SILENCE_MS
+    ) {
+      finishRecordingWindow();
+    }
+    inputMonitorFrame.current = window.requestAnimationFrame(monitorMicrophoneInput);
+  }
+
+  function startRecordingWindow(useFallback = false) {
+    const stream = microphoneStream.current;
+    if (!microphoneEnabledRef.current || !stream?.active || mediaRecorder.current) return;
+    const preferredType = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg"]
+      .find((type) => MediaRecorder.isTypeSupported(type));
+    const recorder = preferredType ? new MediaRecorder(stream, { mimeType: preferredType }) : new MediaRecorder(stream);
+    mediaRecorder.current = recorder;
+    recordedChunks.current = [];
+    fallbackRecording.current = useFallback;
+    recordingHadSpeech.current = true;
+    recordingStartedAt.current = performance.now();
+    lastVoiceAt.current = recordingStartedAt.current;
+    recorder.ondataavailable = (event) => {
+      if (event.data.size) recordedChunks.current.push(event.data);
+    };
+    recorder.onstop = () => {
+      const hadSpeech = recordingHadSpeech.current;
+      const recording = new Blob(recordedChunks.current, { type: recorder.mimeType || "audio/webm" });
+      recordedChunks.current = [];
+      mediaRecorder.current = null;
+      if (!microphoneEnabledRef.current) return;
+      if (fallbackRecording.current) startRecordingWindow(true);
+      if (hadSpeech && recording.size) {
+        voiceQueue.current.push(recording);
+        if (voiceQueue.current.length > 3) voiceQueue.current.shift();
+        void processVoiceQueue();
+      }
+    };
+    recorder.start();
+    recordingTimer.current = window.setTimeout(
+      finishRecordingWindow,
+      useFallback ? 2400 : MAX_VOICE_RECORDING_MS,
+    );
+  }
+
+  async function startContinuousListening() {
+    if (microphoneEnabledRef.current || microphoneStarting) return;
+    if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
+      setError("Microphone recording is not supported in this browser.");
+      return;
+    }
+
+    microphonePreference.current = true;
+    setMicrophoneStarting(true);
+    setError("");
+    setVoiceFeedback("");
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      });
+      microphoneStream.current = stream;
+      microphoneEnabledRef.current = true;
+      setMicrophoneEnabled(true);
+      setMicrophoneStarting(false);
+      try {
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        if (AudioContext) {
+          inputAudioContext.current = new AudioContext();
+          const sourceNode = inputAudioContext.current.createMediaStreamSource(stream);
+          inputAnalyser.current = inputAudioContext.current.createAnalyser();
+          inputAnalyser.current.fftSize = 512;
+          sourceNode.connect(inputAnalyser.current);
+          monitorMicrophoneInput();
+        }
+      } catch { /* Recording still works if input-level detection is unavailable. */ }
+      if (!inputAnalyser.current) startRecordingWindow(true);
+    } catch (microphoneError) {
+      stopContinuousListening(false);
+      microphonePreference.current = false;
+      const message = microphoneError?.name === "NotAllowedError"
+        ? "Microphone permission was denied. Allow microphone access and try again."
+        : `The microphone could not start: ${microphoneError.message}`;
+      setError(message);
+    }
+  }
+
   async function uploadFile(file) {
     if (!file) return;
     const extension = file.name.split(".").pop()?.toLowerCase();
@@ -125,7 +356,10 @@ export default function App() {
       return;
     }
     setError("");
+    setVoiceFeedback("");
     setPhase("uploading");
+    const restartVoiceControl = microphonePreference.current !== false;
+    stopContinuousListening(false);
     interruptLocalAudio();
     const form = new FormData();
     form.append("file", file);
@@ -148,6 +382,7 @@ export default function App() {
       const stateResponse = await api("/playback/state");
       setNavigation(await stateResponse.json());
       setPhase("ready");
+      if (restartVoiceControl) void startContinuousListening();
     } catch (uploadError) {
       setPhase("empty");
       setError(uploadError.message);
@@ -284,7 +519,8 @@ export default function App() {
     }
   }
 
-  const statusLabel = phase === "loading-audio" ? "Preparing voice" : phase === "playing" ? "Reading aloud" : phase === "paused" ? "Paused" : phase === "uploading" ? "Reading document" : navigation?.document_completed ? "Completed" : document ? "Ready" : "No document";
+  const controlsBusy = ["loading-audio", "uploading"].includes(phase);
+  const statusLabel = voiceProcessing ? "Understanding voice…" : phase === "loading-audio" ? "Preparing voice" : phase === "playing" ? "Reading aloud" : phase === "paused" ? "Paused" : phase === "uploading" ? "Reading document" : navigation?.document_completed ? "Completed" : document ? "Ready" : "No document";
 
   return (
     <main className="app-shell">
@@ -374,22 +610,23 @@ export default function App() {
       <footer className="control-dock" aria-label="Reader controls">
         <button className="upload-control" type="button" onClick={() => fileInput.current?.click()}><Icon name="upload" /><span><small>Document</small>{document ? "Replace file" : "Upload file"}</span></button>
         <div className="transport">
-          <button className="icon-button" onClick={stopPlayback} disabled={!document || phase === "ready"} aria-label="Stop"><Icon name="stop" size={17}/></button>
-          <button className="play-button" onClick={phase === "playing" ? pausePlayback : startPlayback} disabled={!document || phase === "loading-audio"} aria-label={phase === "playing" ? "Pause" : "Play"}><Icon name={phase === "playing" ? "pause" : "play"} size={24}/></button>
-          <button className="icon-button" onClick={() => command("next section")} disabled={!document} aria-label="Next section"><Icon name="next" size={19}/></button>
+          <button className="icon-button" onClick={stopPlayback} disabled={!document || phase === "ready" || phase === "uploading"} aria-label="Stop"><Icon name="stop" size={17}/></button>
+          <button className="play-button" onClick={phase === "playing" ? pausePlayback : startPlayback} disabled={!document || controlsBusy} aria-label={phase === "playing" ? "Pause" : "Play"}><Icon name={phase === "playing" ? "pause" : "play"} size={24}/></button>
+          <button className={`voice-button ${microphoneEnabled ? "listening" : ""} ${voiceProcessing ? "processing" : ""}`} onClick={microphoneEnabled ? () => stopContinuousListening(true) : startContinuousListening} disabled={!document || microphoneStarting} aria-label={microphoneEnabled ? "Turn continuous voice control off" : "Turn continuous voice control on"} aria-pressed={microphoneEnabled}><Icon name={microphoneEnabled ? "stop" : "mic"} size={18}/></button>
+          <button className="icon-button" onClick={() => command("next section")} disabled={!document || controlsBusy} aria-label="Next section"><Icon name="next" size={19}/></button>
         </div>
         <div className="speed-control" aria-label="Reading speed">
-          <button onClick={() => command("slow down")} disabled={!document || (navigation?.playback_speed ?? 1) <= 0.5} aria-label="Slow down"><Icon name="minus" size={16}/></button>
+          <button onClick={() => command("slow down")} disabled={!document || controlsBusy || (navigation?.playback_speed ?? 1) <= 0.5} aria-label="Slow down"><Icon name="minus" size={16}/></button>
           <span><small>Speed</small>{(navigation?.playback_speed ?? 1).toFixed(1)}×</span>
-          <button onClick={() => command("speed up")} disabled={!document || (navigation?.playback_speed ?? 1) >= 2} aria-label="Speed up"><Icon name="plus" size={16}/></button>
+          <button onClick={() => command("speed up")} disabled={!document || controlsBusy || (navigation?.playback_speed ?? 1) >= 2} aria-label="Speed up"><Icon name="plus" size={16}/></button>
         </div>
-        <div className="status-control"><span className={`status-dot ${phase}`} /><span><small>Status</small>{statusLabel}</span></div>
+        <div className="status-control" title={voiceFeedback}><span className={`status-dot ${phase}`} /><span className="status-copy"><small>Status</small>{statusLabel}{voiceFeedback && <em>{voiceFeedback}</em>}</span></div>
         <div className="progress-control"><div><small>Document completed</small><strong>{progress}%</strong></div><div className="progress-track" aria-label={`${progress}% complete`}><span style={{ width: `${progress}%` }} /></div></div>
       </footer>
       </div>
 
       <p className="visually-hidden" aria-live="polite" aria-atomic="true">
-        {activeSentence ? `Current sentence: ${activeSentence.raw_text}` : ""}
+        {voiceFeedback || (activeSentence ? `Current sentence: ${activeSentence.raw_text}` : "")}
       </p>
 
       <input ref={fileInput} className="visually-hidden" type="file" accept=".pdf,.txt,.md,application/pdf,text/plain,text/markdown" onChange={(event) => uploadFile(event.target.files?.[0])} />

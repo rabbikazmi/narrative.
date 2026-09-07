@@ -2,6 +2,8 @@ from enum import StrEnum
 
 from pydantic import BaseModel, Field
 
+from backend.models.navigation import NavigationState
+
 
 class CommandIntent(StrEnum):
     NEXT_SECTION = "NEXT_SECTION"
@@ -14,6 +16,7 @@ class CommandIntent(StrEnum):
     READ_NUMBERS = "READ_NUMBERS"
     PAUSE = "PAUSE"
     RESUME = "RESUME"
+    STOP = "STOP"
 
 
 class CommandRequest(BaseModel):
@@ -23,6 +26,8 @@ class CommandRequest(BaseModel):
 class VoiceCommandResponse(BaseModel):
     transcript: str
     intent: CommandIntent
+    state: NavigationState
+    request_id: int | None = None
 
 
 class PlaybackConfig(BaseModel):

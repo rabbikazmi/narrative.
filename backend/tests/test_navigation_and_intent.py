@@ -37,3 +37,8 @@ def test_closed_set_intent_variations():
     assert classify_intent("Could you go to the next chapter?") == CommandIntent.NEXT_SECTION
     assert classify_intent("say that again") == CommandIntent.REPEAT
     assert classify_intent("make it faster") == CommandIntent.SPEED_UP
+    assert classify_intent("stop reading now") == CommandIntent.STOP
+    assert classify_intent("hold on please") == CommandIntent.PAUSE
+    assert classify_intent("start reading") == CommandIntent.RESUME
+    assert classify_intent("boss") == CommandIntent.PAUSE
+    assert classify_intent("for us") == CommandIntent.PAUSE
