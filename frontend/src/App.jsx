@@ -42,6 +42,24 @@ async function api(path, options) {
   return response;
 }
 
+function metricsHeaders() {
+  const test = window.__RIME_TEST_METRICS__?.groundTruthQueue?.shift?.();
+  if (!test) return {};
+  return {
+    "X-Metrics-Ground-Truth": test.command,
+    ...(test.expectedSectionId ? { "X-Metrics-Expected-Section": test.expectedSectionId } : {}),
+    ...(test.expectedSentenceId ? { "X-Metrics-Expected-Sentence": test.expectedSentenceId } : {}),
+  };
+}
+
+function recordMetric(metricType, valueMs, context = {}) {
+  void api("/metrics/event", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ metric_type: metricType, value_ms: valueMs, context }),
+  }).catch(() => {});
+}
+
 export default function App() {
   const [document, setDocument] = useState(null);
   const [navigation, setNavigation] = useState(null);
@@ -204,6 +222,7 @@ export default function App() {
     // while the current recording finishes and Whisper transcribes it.
     playbackVersion.current += 1;
     audio.current.pause();
+    if (audio.current.paused) voiceInterruption.current.haltedAt = Date.now();
     phaseRef.current = "voice-interrupted";
     setPhase("voice-interrupted");
     voicePauseRequest.current = api("/playback/pause", { method: "POST" })
@@ -258,11 +277,30 @@ export default function App() {
   }
 
   async function applyVoiceCommand(payload) {
+    const interruption = voiceInterruption.current;
     voiceInterruption.current = null;
     voicePauseRequest.current = null;
     setVoiceFeedback(`Heard “${payload.transcript}”`);
     setNavigation(payload.state);
     setActiveSentenceId(payload.state.current_sentence_id);
+    if (interruption?.haltedAt && payload.metrics_matched_at) {
+      recordMetric("interrupt_to_silence", interruption.haltedAt - payload.metrics_matched_at, {
+        command_type: payload.intent,
+        command_spoken: payload.transcript,
+      });
+    }
+    if (payload.metrics_expected_section_id || payload.metrics_expected_sentence_id) {
+      recordMetric("state_correctness", null, {
+        command_type: payload.intent,
+        expected_section_id: payload.metrics_expected_section_id,
+        expected_sentence_id: payload.metrics_expected_sentence_id,
+        actual_section_id: payload.state.current_section_id,
+        actual_sentence_id: payload.state.current_sentence_id,
+        pass_fail: payload.metrics_expected_section_id === payload.state.current_section_id
+          && payload.metrics_expected_sentence_id === payload.state.current_sentence_id
+          ? "pass" : "fail",
+      });
+    }
 
     if (payload.intent === "PAUSE") {
       playbackVersion.current += 1;
@@ -306,7 +344,12 @@ export default function App() {
     form.append("audio", blob, `command.${extension}`);
     try {
       await voicePauseRequest.current;
-      const response = await api("/command/voice", { method: "POST", body: form, signal: requestController.signal });
+      const response = await api("/command/voice", {
+        method: "POST",
+        body: form,
+        signal: requestController.signal,
+        headers: metricsHeaders(),
+      });
       const payload = await response.json();
       if (!microphoneEnabledRef.current || requestController.signal.aborted) return;
       voiceQueue.current = [];
@@ -484,6 +527,11 @@ export default function App() {
     currentAudio.current = { sentenceId, requestId };
     audio.current.src = audioUrl.current;
     await audio.current.play();
+    void api("/metrics/audio-started", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ request_id: requestId, audio_started_at: Date.now() }),
+    }).catch(() => {});
     if (expectedVersion !== playbackVersion.current) return false;
     setPhase("playing");
     return true;

@@ -1,5 +1,6 @@
 from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 
+from backend.metrics import now_ms, write_event
 from backend.models.commands import CommandRequest, VoiceCommandResponse
 from backend.voice.intent import classify_intent
 
@@ -30,12 +31,30 @@ async def voice_command(request: Request, audio: UploadFile = File(...)):
         if len(transcript.split()) > 10:
             raise ValueError("No short voice command was recognized.")
         intent = classify_intent(transcript)
+        matched_at = now_ms()
+        ground_truth = request.headers.get("x-metrics-ground-truth")
+        expected_section = request.headers.get("x-metrics-expected-section")
+        expected_sentence = request.headers.get("x-metrics-expected-sentence")
         await reader.command(intent)
+        write_event(
+            "command_recognition",
+            command_type=intent.value,
+            command_spoken=ground_truth,
+            transcript=transcript,
+            intent=intent.value,
+            pass_fail=("pass" if ground_truth.upper() == intent.value else "fail") if ground_truth else None,
+            expected_section_id=expected_section,
+            expected_sentence_id=expected_sentence,
+            matched_at=matched_at,
+        )
         return {
             "transcript": transcript,
             "intent": intent,
             "state": (await reader.store.read()).model_dump(),
             "request_id": reader.playback.request_id(),
+            "metrics_matched_at": matched_at,
+            "metrics_expected_section_id": expected_section,
+            "metrics_expected_sentence_id": expected_sentence,
         }
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error

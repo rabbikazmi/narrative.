@@ -43,6 +43,7 @@ Thumbs.db
 *.log
 *.tmp
 uploads/
+logs/
 
 # frontend dependencies and builds
 frontend/node_modules/

@@ -6,6 +6,7 @@ from backend.navigation.state import NavigationStateStore
 from backend.playback.manager import PlaybackManager
 from backend.tts.rime_client import RimeClient
 from backend.utils.logger import log_event
+from backend.metrics import bind_tts_handoff, mark_tts_handoff
 
 
 class RequestManager:
@@ -76,6 +77,7 @@ class RequestManager:
             self._generation += 1
             request_id = self._generation
             if prefetched_audio is not None:
+                bind_tts_handoff(request_id, sentence.id, state.playback_speed)
                 task = asyncio.create_task(self._deliver(
                     request_id, state.current_sentence_id, prefetched_audio, "prefetched",
                 ))
@@ -95,6 +97,7 @@ class RequestManager:
               voice=getattr(self.client, "default_voice", "configured"), speed=speed,
                   sentence_id=sentence_id, text=text, status="started")
         try:
+            mark_tts_handoff(request_id, sentence_id, speed)
             audio = await self.client.synthesize(
                 text,
                 getattr(self.client, "default_voice", None),
@@ -156,6 +159,7 @@ class RequestManager:
                         text: str, speed: float) -> None:
         log_event("tts_prefetch", sentence_id=sentence_id, speed=speed, status="started")
         try:
+            mark_tts_handoff(None, sentence_id, speed)
             audio = await self.client.synthesize(
                 text,
                 getattr(self.client, "default_voice", None),
