@@ -20,6 +20,7 @@ def mock_transport(audio: bytes = b"wav-audio") -> httpx.MockTransport:
         assert payload["text"]
         assert payload["speaker"] == "lyra"
         assert payload["modelId"] == "coda"
+        assert payload["language"] == "en"
         assert payload["speedAlpha"] == 1.0
         return httpx.Response(200, content=audio, headers={"content-type": "audio/wav"})
 

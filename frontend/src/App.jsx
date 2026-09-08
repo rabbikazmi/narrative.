@@ -212,7 +212,7 @@ export default function App() {
     if (voiceInterruption.current) return;
     const previousPhase = phaseRef.current;
     const wasPlaying = previousPhase === "playing";
-    voiceInterruption.current = { previousPhase, wasPlaying };
+    voiceInterruption.current = { previousPhase, wasPlaying, detectedAt: Date.now() };
     if (!wasPlaying) {
       voicePauseRequest.current = Promise.resolve();
       return;
@@ -283,8 +283,8 @@ export default function App() {
     setVoiceFeedback(`Heard “${payload.transcript}”`);
     setNavigation(payload.state);
     setActiveSentenceId(payload.state.current_sentence_id);
-    if (interruption?.haltedAt && payload.metrics_matched_at) {
-      recordMetric("interrupt_to_silence", interruption.haltedAt - payload.metrics_matched_at, {
+    if (interruption?.haltedAt && interruption.detectedAt) {
+      recordMetric("interrupt_to_silence", interruption.haltedAt - interruption.detectedAt, {
         command_type: payload.intent,
         command_spoken: payload.transcript,
       });

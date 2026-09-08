@@ -13,11 +13,13 @@ class RimeClient:
 
     def __init__(self, api_url: str | None = None, api_key: str | None = None,
                  model: str | None = None, voice: str | None = None,
+                 language: str | None = None,
                  transport: httpx.AsyncBaseTransport | None = None) -> None:
         self.api_url = api_url or os.getenv("RIME_API_URL", "https://users.rime.ai/v1/rime-tts")
         self.api_key = api_key or os.getenv("RIME_API_KEY")
         self.default_model = model or os.getenv("RIME_MODEL_ID", os.getenv("RIME_MODEL", ""))
         self.default_voice = voice or os.getenv("RIME_VOICE", os.getenv("RIME_SPEAKER", ""))
+        self.default_language = language or os.getenv("RIME_LANGUAGE", "en")
         self.transport = transport
 
     def _request(self, text: str, voice: str | None, model: str | None, speed: float) -> tuple[dict, dict]:
@@ -31,7 +33,13 @@ class RimeClient:
             raise RuntimeError("RIME voice and model are not configured")
         return (
             {"Authorization": f"Bearer {self.api_key}", "Accept": "audio/wav"},
-            {"text": text, "speaker": selected_voice, "modelId": selected_model, "speedAlpha": speed},
+            {
+                "text": text,
+                "speaker": selected_voice,
+                "modelId": selected_model,
+                "language": self.default_language,
+                "speedAlpha": speed,
+            },
         )
 
     async def synthesize(self, text: str, voice: str | None = None,
