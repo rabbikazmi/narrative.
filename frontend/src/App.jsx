@@ -672,7 +672,10 @@ export default function App() {
               {document.sections.map((section, sectionIndex) => {
                 const isCurrentSection = section.sentences.some((sentence) => sentence.id === activeSentenceId);
                 return (
-                  <section className={`section-summary ${isCurrentSection ? "current" : ""}`} key={section.id}>
+                  <section
+                    className={`section-summary level-${Math.min(section.level || 1, 3)} ${isCurrentSection ? "current" : ""}`}
+                    key={section.id}
+                  >
                     <div className="section-heading">
                       <span>{String(sectionIndex + 1).padStart(2, "0")}</span>
                       <h2>{section.title || `Section ${sectionIndex + 1}`}</h2>

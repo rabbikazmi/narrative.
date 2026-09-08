@@ -22,6 +22,8 @@ class Sentence(BaseModel):
 class Section(BaseModel):
     id: str
     title: str | None = None
+    level: int = Field(default=1, ge=1, le=6)
+    parent_section_id: str | None = None
     sentences: list[Sentence] = Field(default_factory=list)
 
 

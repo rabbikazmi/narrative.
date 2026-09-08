@@ -6,6 +6,7 @@ import pytest
 
 from backend.document.structure import structure_document
 from backend.models.commands import CommandIntent
+from backend.navigation.state import NavigationStateStore
 from backend.playback.manager import PlaybackManager
 from backend.service import ReaderService
 from backend.tts.rime_client import RimeClient
@@ -155,6 +156,22 @@ async def test_section_title_is_included_when_entering_a_section():
     assert client.calls[0] == "Section 1. Introduction. Opening sentence."
     assert client.calls[1] == "Section 2. Final section. Closing sentence."
     await service.requests.interrupt()
+
+
+@pytest.mark.asyncio
+async def test_numbered_subsection_context_includes_parent_heading():
+    store = NavigationStateStore()
+    document = structure_document(
+        "paper.md",
+        "# 6 Results\n\n## 6.1 Translation\n\nThe model performs well.",
+    )
+    await store.load_document(document)
+
+    sentence = document.sections[1].sentences[0]
+
+    assert await store.section_context(sentence.id) == (
+        1, "6 Results. Subsection 6.1 Translation",
+    )
 
 
 @pytest.mark.asyncio

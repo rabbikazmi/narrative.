@@ -1,4 +1,5 @@
 import asyncio
+import re
 from backend.document.normalizer import extract_numeric_spans, normalize_text
 from backend.models.document import Sentence
 from backend.navigation.controller import NavigationController
@@ -150,9 +151,12 @@ class RequestManager:
         if not context:
             return sentence.normalized_text
         section_number, title = context
-        announcement = f"Section {section_number}."
-        if title:
-            announcement += f" {normalize_text(title).rstrip('.')}."
+        if title and re.match(r"^\d+(?:\.\d+)*\s", title):
+            announcement = f"Section {normalize_text(title).rstrip('.')}."
+        else:
+            announcement = f"Section {section_number}."
+            if title:
+                announcement += f" {normalize_text(title).rstrip('.')}."
         return f"{announcement} {sentence.normalized_text}"
 
     async def _prefetch(self, generation: int, sentence_id: str,

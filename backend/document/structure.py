@@ -1,6 +1,7 @@
 import re
 from dataclasses import dataclass
 
+from backend.document.parser import ParsedPdfDocument
 from backend.document.normalizer import normalize_text
 from backend.models.document import Document, Section, Sentence
 from backend.utils.ids import document_id, section_id, sentence_id
@@ -17,6 +18,7 @@ class _Block:
     kind: str
     text: str
     list_marker: str | None = None
+    heading_level: int | None = None
 
 
 def _looks_like_heading(line: str) -> bool:
@@ -61,7 +63,13 @@ def _content_blocks(lines: list[str], page_number: int) -> list[_Block]:
     return blocks
 
 
-def _parse_blocks(text: str) -> list[_Block]:
+def _parse_blocks(text: str | ParsedPdfDocument) -> list[_Block]:
+    if isinstance(text, ParsedPdfDocument):
+        return [
+            _Block(block.page_number, block.kind, block.text, block.list_marker, block.heading_level)
+            for block in text.blocks
+        ]
+
     blocks: list[_Block] = []
     for page_number, page in enumerate(text.split("\f"), start=1):
         chunks = [chunk.strip() for chunk in re.split(r"\n\s*\n", page) if chunk.strip()]
@@ -72,7 +80,8 @@ def _parse_blocks(text: str) -> list[_Block]:
 
             markdown_heading = _MARKDOWN_HEADING.match(lines[0])
             if markdown_heading:
-                blocks.append(_Block(page_number, "heading", markdown_heading.group(1).strip()))
+                level = len(lines[0]) - len(lines[0].lstrip("#"))
+                blocks.append(_Block(page_number, "heading", markdown_heading.group(1).strip(), heading_level=level))
                 blocks.extend(_content_blocks(lines[1:], page_number))
             elif _looks_like_heading(lines[0]) and (len(lines) > 1 or len(chunks) > 1):
                 blocks.append(_Block(page_number, "heading", lines[0]))
@@ -82,15 +91,29 @@ def _parse_blocks(text: str) -> list[_Block]:
     return blocks
 
 
-def structure_document(name: str, text: str) -> Document:
+def structure_document(name: str, text: str | ParsedPdfDocument) -> Document:
     """Build a deterministic map while retaining boundaries needed for narration."""
     sections: list[Section] = []
     title: str | None = None
+    heading_level = 1
     pending_blocks: list[_Block] = []
 
-    def flush_section() -> None:
-        nonlocal title, pending_blocks
+    def flush_section(preserve_empty: bool = False) -> None:
+        nonlocal title, heading_level, pending_blocks
         if not pending_blocks:
+            if preserve_empty and title:
+                section_number = len(sections) + 1
+                parent_section_id = next((
+                    section.id for section in reversed(sections) if section.level < heading_level
+                ), None)
+                sections.append(Section(
+                    id=section_id(section_number),
+                    title=title,
+                    level=heading_level,
+                    parent_section_id=parent_section_id,
+                ))
+                title = None
+                heading_level = 1
             return
 
         section_number = len(sections) + 1
@@ -125,18 +148,25 @@ def structure_document(name: str, text: str) -> Document:
                 previous_page = block.page_number
 
         if built_sentences:
+            parent_section_id = next((
+                section.id for section in reversed(sections) if section.level < heading_level
+            ), None)
             sections.append(Section(
                 id=section_id(section_number),
                 title=title,
+                level=heading_level,
+                parent_section_id=parent_section_id,
                 sentences=built_sentences,
             ))
         title = None
+        heading_level = 1
         pending_blocks = []
 
     for block in _parse_blocks(text):
         if block.kind == "heading":
-            flush_section()
+            flush_section(preserve_empty=True)
             title = block.text
+            heading_level = block.heading_level or 1
         else:
             pending_blocks.append(block)
     flush_section()

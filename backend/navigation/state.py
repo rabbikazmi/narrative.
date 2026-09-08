@@ -67,7 +67,23 @@ class NavigationStateStore:
             populated_sections = [section for section in self._document.sections if section.sentences]
             for index, section in enumerate(populated_sections, start=1):
                 if any(sentence.id == sentence_id for sentence in section.sentences):
-                    return index, section.title
+                    titles: list[str] = []
+                    current = section
+                    while current:
+                        if current.title:
+                            titles.append(current.title)
+                        current = next((
+                            candidate for candidate in self._document.sections
+                            if candidate.id == current.parent_section_id
+                        ), None)
+                    titles.reverse()
+                    if len(titles) > 1:
+                        title = f"{titles[0]}. " + ". ".join(
+                            f"Subsection {item}" for item in titles[1:]
+                        )
+                    else:
+                        title = titles[0] if titles else None
+                    return index, title
             return None
 
     async def current_content(self) -> CurrentSentence | None:

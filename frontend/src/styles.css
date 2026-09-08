@@ -47,6 +47,8 @@ button:focus-visible, a:focus-visible { outline: 3px solid rgba(95, 134, 166, 0.
 .rail-heading > span { color: #718198; font-size: .72rem; white-space: nowrap; }
 .section-list { min-height: 0; padding: 14px 12px 40px; overflow-y: auto; scrollbar-color: var(--ocean) transparent; }
 .section-summary { margin: 0 0 17px; padding: 12px 10px 14px; border-left: 2px solid transparent; }
+.section-summary.level-2 { margin-left: 12px; }
+.section-summary.level-3 { margin-left: 24px; }
 .section-summary.current { border-left-color: var(--midnight); background: rgba(143,182,216,.16); }
 .section-heading { display: grid; grid-template-columns: 30px minmax(0,1fr); gap: 5px; align-items: baseline; }
 .section-heading > span { color: var(--denim); font-size: .68rem; font-weight: 700; }
