@@ -608,7 +608,7 @@ export default function App() {
     <main className="app-shell">
       <header className="topbar">
         <div className="brand-mark" aria-hidden="true"><span /><span /><span /></div>
-        <div><p className="eyebrow">Can put a tagline here</p><h1>decide a fun name</h1></div>
+        <div><p className="eyebrow">Read beyond the screen</p><h1>Narrative.</h1></div>
         <div className={`connection ${document ? "active" : ""}`}><span />{document ? "Document loaded" : "Waiting for a file"}</div>
       </header>
 
