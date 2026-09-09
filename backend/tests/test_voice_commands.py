@@ -63,6 +63,11 @@ def test_voice_command_transcribes_and_returns_updated_playback_state():
         response = client.post(
             "/command/voice",
             files={"audio": ("command.webm", BytesIO(b"recorded-audio"), "audio/webm")},
+            headers={
+                "X-Metrics-Ground-Truth": "NEXT_SECTION",
+                "X-Metrics-Expected-Section": "sec_2",
+                "X-Metrics-Expected-Sentence": "sec_2.sent_1",
+            },
         )
 
     assert response.status_code == 200
@@ -72,6 +77,36 @@ def test_voice_command_transcribes_and_returns_updated_playback_state():
     assert payload["intent"] == "NEXT_SECTION"
     assert payload["state"]["current_section_id"] == "sec_2"
     assert payload["request_id"] is not None
+    assert payload["metrics_matched_at"] is not None
+    assert payload["metrics_expected_section_id"] == "sec_2"
+    assert payload["metrics_expected_sentence_id"] == "sec_2.sent_1"
+
+
+def test_unrecognized_labeled_command_is_recorded_as_failure(monkeypatch):
+    recorded = []
+    monkeypatch.setattr(
+        "backend.api.command_routes.write_event",
+        lambda metric_type, **fields: recorded.append((metric_type, fields)),
+    )
+    with make_client(FakeRecognizer(transcript="summarize the document")) as client:
+        response = client.post(
+            "/command/voice",
+            files={"audio": ("command.webm", BytesIO(b"recorded-audio"), "audio/webm")},
+            headers={"X-Metrics-Ground-Truth": "NEXT_SECTION"},
+        )
+
+    assert response.status_code == 422
+    assert response.headers["X-Metrics-Attempt-Recorded"] == "true"
+    assert recorded == [("command_recognition", {
+        "command_type": None,
+        "command_spoken": "NEXT_SECTION",
+        "transcript": "summarize the document",
+        "intent": None,
+        "pass_fail": "fail",
+        "expected_section_id": None,
+        "expected_sentence_id": None,
+        "matched_at": None,
+    })]
 
 
 def test_start_voice_command_begins_playback_without_using_play_button():
@@ -101,10 +136,12 @@ def test_voice_command_reports_recognition_errors(error, status_code):
         response = client.post(
             "/command/voice",
             files={"audio": ("command.webm", BytesIO(b"audio"), "audio/webm")},
+            headers={"X-Metrics-Ground-Truth": "PAUSE"},
         )
 
     assert response.status_code == status_code
     assert response.json()["detail"] == str(error)
+    assert "X-Metrics-Attempt-Recorded" not in response.headers
 
 
 @pytest.mark.asyncio

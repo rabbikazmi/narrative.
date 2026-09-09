@@ -26,15 +26,34 @@ async def command(request: Request, payload: CommandRequest):
 async def voice_command(request: Request, audio: UploadFile = File(...)):
     reader = request.app.state.reader
     recognizer = reader.recognizer
+    ground_truth = request.headers.get("x-metrics-ground-truth")
+    expected_section = request.headers.get("x-metrics-expected-section")
+    expected_sentence = request.headers.get("x-metrics-expected-sentence")
     try:
         transcript = await recognizer.transcribe(await audio.read(), audio.filename)
         if len(transcript.split()) > 10:
             raise ValueError("No short voice command was recognized.")
-        intent = classify_intent(transcript)
+        try:
+            intent = classify_intent(transcript)
+        except ValueError as error:
+            if ground_truth:
+                write_event(
+                    "command_recognition",
+                    command_type=None,
+                    command_spoken=ground_truth,
+                    transcript=transcript,
+                    intent=None,
+                    pass_fail="fail",
+                    expected_section_id=expected_section,
+                    expected_sentence_id=expected_sentence,
+                    matched_at=None,
+                )
+            raise HTTPException(
+                status_code=422,
+                detail=str(error),
+                headers={"X-Metrics-Attempt-Recorded": "true"} if ground_truth else None,
+            ) from error
         matched_at = now_ms()
-        ground_truth = request.headers.get("x-metrics-ground-truth")
-        expected_section = request.headers.get("x-metrics-expected-section")
-        expected_sentence = request.headers.get("x-metrics-expected-sentence")
         await reader.command(intent)
         write_event(
             "command_recognition",
@@ -56,6 +75,8 @@ async def voice_command(request: Request, audio: UploadFile = File(...)):
             "metrics_expected_section_id": expected_section,
             "metrics_expected_sentence_id": expected_sentence,
         }
+    except HTTPException:
+        raise
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
     except RuntimeError as error:

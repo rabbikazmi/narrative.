@@ -37,19 +37,24 @@ async function api(path, options) {
     } catch { /* Use the readable fallback. */ }
     const error = new Error(message);
     error.status = response.status;
+    error.metricsAttemptRecorded = response.headers.get("X-Metrics-Attempt-Recorded") === "true";
     throw error;
   }
   return response;
 }
 
 function metricsHeaders() {
-  const test = window.__RIME_TEST_METRICS__?.groundTruthQueue?.shift?.();
+  const test = window.__RIME_TEST_METRICS__?.groundTruthQueue?.[0];
   if (!test) return {};
   return {
     "X-Metrics-Ground-Truth": test.command,
     ...(test.expectedSectionId ? { "X-Metrics-Expected-Section": test.expectedSectionId } : {}),
     ...(test.expectedSentenceId ? { "X-Metrics-Expected-Sentence": test.expectedSentenceId } : {}),
   };
+}
+
+function consumeMetricsGroundTruth() {
+  window.__RIME_TEST_METRICS__?.groundTruthQueue?.shift?.();
 }
 
 function recordMetric(metricType, valueMs, context = {}) {
@@ -212,7 +217,7 @@ export default function App() {
     if (voiceInterruption.current) return;
     const previousPhase = phaseRef.current;
     const wasPlaying = previousPhase === "playing";
-    voiceInterruption.current = { previousPhase, wasPlaying, detectedAt: Date.now() };
+    voiceInterruption.current = { previousPhase, wasPlaying, detectedAt: performance.now() };
     if (!wasPlaying) {
       voicePauseRequest.current = Promise.resolve();
       return;
@@ -222,7 +227,7 @@ export default function App() {
     // while the current recording finishes and Whisper transcribes it.
     playbackVersion.current += 1;
     audio.current.pause();
-    if (audio.current.paused) voiceInterruption.current.haltedAt = Date.now();
+    if (audio.current.paused) voiceInterruption.current.haltedAt = performance.now();
     phaseRef.current = "voice-interrupted";
     setPhase("voice-interrupted");
     voicePauseRequest.current = api("/playback/pause", { method: "POST" })
@@ -350,12 +355,14 @@ export default function App() {
         signal: requestController.signal,
         headers: metricsHeaders(),
       });
+      consumeMetricsGroundTruth();
       const payload = await response.json();
       if (!microphoneEnabledRef.current || requestController.signal.aborted) return;
       voiceQueue.current = [];
       await applyVoiceCommand(payload);
     } catch (voiceError) {
       if (voiceError.name === "AbortError") return;
+      if (voiceError.metricsAttemptRecorded) consumeMetricsGroundTruth();
       // Silence and ordinary speech are expected while continuously listening.
       await restoreAfterIgnoredSpeech();
       if (voiceError.status !== 422) {

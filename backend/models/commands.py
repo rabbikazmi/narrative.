@@ -28,6 +28,9 @@ class VoiceCommandResponse(BaseModel):
     intent: CommandIntent
     state: NavigationState
     request_id: int | None = None
+    metrics_matched_at: float | None = None
+    metrics_expected_section_id: str | None = None
+    metrics_expected_sentence_id: str | None = None
 
 
 class PlaybackConfig(BaseModel):
