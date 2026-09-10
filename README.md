@@ -1,6 +1,6 @@
 # Narrative.
 
-Narrative is a voice-navigable document reader designed for blind and visually impaired users. It reads PDF, Markdown, and plain-text documents with Rime TTS while maintaining a navigable section and sentence position. The browser keeps listening during playback so a user can interrupt with commands such as "pause," "repeat," "next section," "slow down," or "read the numbers."
+Narrative is a voice-navigable document reader designed for blind and visually impaired users. It reads PDF, Markdown, and plain-text documents with Rime TTS while maintaining a navigable section and sentence position. The browser keeps listening during playback so a user can interrupt with commands such as "pause," "repeat," "next section," "slow down".
 
 ## Submission Documents
 
