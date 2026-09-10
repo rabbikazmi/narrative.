@@ -188,19 +188,35 @@ The exact full-duplex procedure and browser-console labeling snippet are in [`RI
 - PDF highlighting appears in the reading map, not directly over the PDF page.
 - Voice recognition supports short English commands, not dictation or open-ended questions.
 - The first voice command may be slower while the speech-recognition model loads.
-- Rime speech requires an internet connection.
-- The current backend stores one reading session in memory and is intended for a local demo.
+- Hindi, multilingual, and code-mixed content (e.g., Hinglish) is not currently supported.
 
 ## Repository map
 
-- `backend/document/` - parsing, PDF structure extraction, segmentation, and normalization.
-- `backend/navigation/` - state storage and deterministic navigation transitions.
-- `backend/voice/` - Faster Whisper adapter and closed command grammar.
-- `backend/tts/` - Rime client, prefetching, cancellation, and stale-result rejection.
-- `backend/playback/` - server-side playback lifecycle.
-- `backend/api/` - document, command, playback, and metric endpoints.
-- `backend/tests/` - unit, integration, interruption, ASR, and completion tests.
-- `frontend/src/` - document viewer, reading map, browser audio, microphone control, and metrics hooks.
-- `analyze_metrics.py` - p50/p95 latency and command/state accuracy report.
+```text
+.
+├── analyze_metrics.py          # Metrics analysis report
+├── pyproject.toml              # Python package and test configuration
+├── requirements.txt            # Python dependencies
+├── RIME_EVIDENCE.md            # Acceptance evidence and demo procedure
+├── demo/
+│   └── acceptance_fixture.md   # Reproducible demo document
+├── backend/
+│   ├── main.py                 # FastAPI application
+│   ├── service.py              # Application service wiring
+│   ├── api/                    # HTTP route handlers
+│   ├── document/               # Parsing, structure, and normalization
+│   ├── models/                 # API and domain models
+│   ├── navigation/             # Reading state and navigation transitions
+│   ├── playback/               # Playback lifecycle management
+│   ├── tts/                    # Rime client and request management
+│   ├── voice/                  # Speech recognition and intent matching
+│   └── tests/                  # Backend unit and integration tests
+├── frontend/
+│   ├── src/                    # React reader interface
+│   ├── index.html
+│   └── package.json
+└── logs/
+    └── metrics.jsonl           # Runtime metrics output
+```
 
 
