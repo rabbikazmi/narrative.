@@ -4,7 +4,7 @@ Narrative is a voice-navigable document reader designed for blind and visually i
 
 ## Submission Documents
 
-- Recorded demo: **to be added**
+- Recorded demo: ['demo'](https://youtu.be/lc2fw9bTHFU)
 - Reproducible demo fixture: [`demo/acceptance_fixture.md`](demo/acceptance_fixture.md)
 - Claim and acceptance evidence: [`RIME_EVIDENCE.md`](RIME_EVIDENCE.md)
 
